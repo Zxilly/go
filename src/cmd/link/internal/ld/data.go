@@ -2729,7 +2729,7 @@ func (ctxt *Link) address() []*sym.Segment {
 		s.Vaddr = va
 		va += s.Length
 
-		if ctxt.IsWasm() && i == 0 && va < wasmMinDataAddr {
+		if (ctxt.IsWasm() || ctxt.IsWasm32()) && i == 0 && va < wasmMinDataAddr {
 			va = wasmMinDataAddr
 		}
 	}

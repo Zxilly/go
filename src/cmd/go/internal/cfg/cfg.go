@@ -425,6 +425,7 @@ var (
 	GOPPC64, goPPC64Changed     = EnvOrAndChanged("GOPPC64", fmt.Sprintf("%s%d", "power", buildcfg.GOPPC64))
 	GORISCV64, goRISCV64Changed = EnvOrAndChanged("GORISCV64", fmt.Sprintf("rva%du64", buildcfg.GORISCV64))
 	GOWASM, goWASMChanged       = EnvOrAndChanged("GOWASM", fmt.Sprint(buildcfg.GOWASM))
+	GOWASM32, goWASM32Changed   = EnvOrAndChanged("GOWASM32", fmt.Sprint(buildcfg.GOWASM32))
 
 	GOPROXY, GOPROXYChanged     = EnvOrAndChanged("GOPROXY", "")
 	GOSUMDB, GOSUMDBChanged     = EnvOrAndChanged("GOSUMDB", "")
