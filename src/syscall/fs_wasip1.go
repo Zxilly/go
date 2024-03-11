@@ -276,6 +276,7 @@ func random_get(buf unsafe.Pointer, bufLen size) Errno
 type fdstat struct {
 	filetype         filetype
 	fdflags          uint16
+	_                uint16 // pad
 	rightsBase       rights
 	rightsInheriting rights
 }
@@ -292,8 +293,9 @@ func fd_fdstat_set_flags(fd int32, flags fdflags) Errno
 //go:linkname fd_fdstat_get_flags
 
 func fd_fdstat_get_flags(fd int) (uint32, error) {
-	var stat fdstat
-	errno := fd_fdstat_get(int32(fd), unsafe.Pointer(&stat))
+	var stat *fdstat
+	runtime.NewAligned(&stat)
+	errno := fd_fdstat_get(int32(fd), unsafe.Pointer(stat))
 	return uint32(stat.fdflags), errnoErr(errno)
 }
 
@@ -301,8 +303,9 @@ func fd_fdstat_get_flags(fd int) (uint32, error) {
 //go:linkname fd_fdstat_get_type
 
 func fd_fdstat_get_type(fd int) (uint8, error) {
-	var stat fdstat
-	errno := fd_fdstat_get(int32(fd), unsafe.Pointer(&stat))
+	var stat *fdstat
+	runtime.NewAligned(&stat)
+	errno := fd_fdstat_get(int32(fd), unsafe.Pointer(stat))
 	return stat.filetype, errnoErr(errno)
 }
 
@@ -348,13 +351,18 @@ var preopens []opendir
 var cwd string
 
 func init() {
-	dirNameBuf := make([]byte, 256)
+	var dnb *[1024]byte
+
+	runtime.NewAligned(&dnb)
+
 	// We start looking for preopens at fd=3 because 0, 1, and 2 are reserved
 	// for standard input and outputs.
 	for preopenFd := int32(3); ; preopenFd++ {
-		var prestat prestat
+		var prestat *prestat
 
-		errno := fd_prestat_get(preopenFd, unsafe.Pointer(&prestat))
+		runtime.NewAligned(&prestat)
+
+		errno := fd_prestat_get(preopenFd, unsafe.Pointer(prestat))
 		if errno == EBADF {
 			break
 		}
@@ -364,18 +372,19 @@ func init() {
 		if errno != 0 {
 			panic("fd_prestat: " + errno.Error())
 		}
-		if int(prestat.dir.prNameLen) > len(dirNameBuf) {
-			dirNameBuf = make([]byte, prestat.dir.prNameLen)
+		sz := uint32(1024)
+		if int(prestat.dir.prNameLen) < 1024 {
+			sz = uint32(prestat.dir.prNameLen)
 		}
 
-		errno = fd_prestat_dir_name(preopenFd, unsafe.Pointer(&dirNameBuf[0]), prestat.dir.prNameLen)
+		errno = fd_prestat_dir_name(preopenFd, unsafe.Pointer(dnb), sz)
 		if errno != 0 {
 			panic("fd_prestat_dir_name: " + errno.Error())
 		}
 
 		preopens = append(preopens, opendir{
 			fd:   preopenFd,
-			name: string(dirNameBuf[:prestat.dir.prNameLen]),
+			name: string((*dnb)[:sz]),
 		})
 	}
 
@@ -559,6 +568,7 @@ func Open(path string, openmode int, perm uint32) (int, error) {
 	}
 
 	var fd int32
+
 	errno := path_open(
 		dirFd,
 		LOOKUP_SYMLINK_FOLLOW,
@@ -614,9 +624,10 @@ func Mkdir(path string, perm uint32) error {
 }
 
 func ReadDir(fd int, buf []byte, cookie dircookie) (int, error) {
-	var nwritten size
-	errno := fd_readdir(int32(fd), unsafe.Pointer(&buf[0]), size(len(buf)), cookie, unsafe.Pointer(&nwritten))
-	return int(nwritten), errnoErr(errno)
+	var nwritten *size
+	runtime.NewAligned(&nwritten)
+	errno := fd_readdir(int32(fd), unsafe.Pointer(&buf[0]), size(len(buf)), cookie, unsafe.Pointer(nwritten))
+	return int(*nwritten), errnoErr(errno)
 }
 
 type Stat_t struct {
@@ -640,8 +651,13 @@ func Stat(path string, st *Stat_t) error {
 	if path == "" {
 		return EINVAL
 	}
+
+	var local *Stat_t
+	runtime.NewAligned(&local)
+
 	dirFd, pathPtr, pathLen := preparePath(path)
-	errno := path_filestat_get(dirFd, LOOKUP_SYMLINK_FOLLOW, pathPtr, pathLen, unsafe.Pointer(st))
+	errno := path_filestat_get(dirFd, LOOKUP_SYMLINK_FOLLOW, pathPtr, pathLen, unsafe.Pointer(local))
+	*st = *local
 	setDefaultMode(st)
 	return errnoErr(errno)
 }
@@ -650,14 +666,23 @@ func Lstat(path string, st *Stat_t) error {
 	if path == "" {
 		return EINVAL
 	}
+
+	var local *Stat_t
+	runtime.NewAligned(&local)
+
 	dirFd, pathPtr, pathLen := preparePath(path)
-	errno := path_filestat_get(dirFd, 0, pathPtr, pathLen, unsafe.Pointer(st))
+	errno := path_filestat_get(dirFd, 0, pathPtr, pathLen, unsafe.Pointer(local))
+	*st = *local
 	setDefaultMode(st)
 	return errnoErr(errno)
 }
 
 func Fstat(fd int, st *Stat_t) error {
-	errno := fd_filestat_get(int32(fd), unsafe.Pointer(st))
+	var local *Stat_t
+	runtime.NewAligned(&local)
+
+	errno := fd_filestat_get(int32(fd), unsafe.Pointer(local))
+	*st = *local
 	setDefaultMode(st)
 	return errnoErr(errno)
 }
@@ -697,8 +722,9 @@ func Chmod(path string, mode uint32) error {
 }
 
 func Fchmod(fd int, mode uint32) error {
-	var stat Stat_t
-	return Fstat(fd, &stat)
+	var stat *Stat_t
+	runtime.NewAligned(&stat)
+	return Fstat(fd, stat)
 }
 
 func Chown(path string, uid, gid int) error {
@@ -797,9 +823,11 @@ func Chdir(path string) error {
 	}
 	path = joinPath(dir, path)
 
-	var stat Stat_t
+	var stat *Stat_t
+	runtime.NewAligned(&stat)
+
 	dirFd, pathPtr, pathLen := preparePath(path)
-	errno := path_filestat_get(dirFd, LOOKUP_SYMLINK_FOLLOW, pathPtr, pathLen, unsafe.Pointer(&stat))
+	errno := path_filestat_get(dirFd, LOOKUP_SYMLINK_FOLLOW, pathPtr, pathLen, unsafe.Pointer(stat))
 	if errno != 0 {
 		return errnoErr(errno)
 	}
@@ -818,21 +846,22 @@ func Readlink(path string, buf []byte) (n int, err error) {
 		return 0, nil
 	}
 	dirFd, pathPtr, pathLen := preparePath(path)
-	var nwritten size
+	var nwritten *size
+	runtime.NewAligned(&nwritten)
 	errno := path_readlink(
 		dirFd,
 		pathPtr,
 		pathLen,
 		unsafe.Pointer(&buf[0]),
 		size(len(buf)),
-		unsafe.Pointer(&nwritten),
+		unsafe.Pointer(nwritten),
 	)
 	// For some reason wasmtime returns ERANGE when the output buffer is
 	// shorter than the symbolic link value. os.Readlink expects a nil
 	// error and uses the fact that n is greater or equal to the buffer
 	// length to assume that it needs to try again with a larger size.
 	// This condition is handled in os.Readlink.
-	return int(nwritten), errnoErr(errno)
+	return int(*nwritten), errnoErr(errno)
 }
 
 func Link(path, link string) error {
@@ -889,37 +918,44 @@ func makeIOVec(b []byte) unsafe.Pointer {
 }
 
 func Read(fd int, b []byte) (int, error) {
-	var nread size
-	errno := fd_read(int32(fd), makeIOVec(b), 1, unsafe.Pointer(&nread))
+	var nread *size
+	runtime.NewAligned(&nread)
+	errno := fd_read(int32(fd), makeIOVec(b), 1, unsafe.Pointer(nread))
 	runtime.KeepAlive(b)
-	return int(nread), errnoErr(errno)
+	return int(*nread), errnoErr(errno)
 }
 
 func Write(fd int, b []byte) (int, error) {
-	var nwritten size
-	errno := fd_write(int32(fd), makeIOVec(b), 1, unsafe.Pointer(&nwritten))
+	var nwritten *size
+	runtime.NewAligned(&nwritten)
+	errno := fd_write(int32(fd), makeIOVec(b), 1, unsafe.Pointer(nwritten))
 	runtime.KeepAlive(b)
-	return int(nwritten), errnoErr(errno)
+	return int(*nwritten), errnoErr(errno)
 }
 
 func Pread(fd int, b []byte, offset int64) (int, error) {
-	var nread size
-	errno := fd_pread(int32(fd), makeIOVec(b), 1, filesize(offset), unsafe.Pointer(&nread))
+	var nread *size
+	runtime.NewAligned(&nread)
+	errno := fd_pread(int32(fd), makeIOVec(b), 1, filesize(offset), unsafe.Pointer(nread))
 	runtime.KeepAlive(b)
-	return int(nread), errnoErr(errno)
+	return int(*nread), errnoErr(errno)
 }
 
 func Pwrite(fd int, b []byte, offset int64) (int, error) {
-	var nwritten size
-	errno := fd_pwrite(int32(fd), makeIOVec(b), 1, filesize(offset), unsafe.Pointer(&nwritten))
+	var nwritten *size
+	runtime.NewAligned(&nwritten)
+	errno := fd_pwrite(int32(fd), makeIOVec(b), 1, filesize(offset), unsafe.Pointer(nwritten))
 	runtime.KeepAlive(b)
-	return int(nwritten), errnoErr(errno)
+	return int(*nwritten), errnoErr(errno)
 }
 
 func Seek(fd int, offset int64, whence int) (int64, error) {
-	var newoffset filesize
-	errno := fd_seek(int32(fd), filedelta(offset), uint32(whence), unsafe.Pointer(&newoffset))
-	return int64(newoffset), errnoErr(errno)
+	var newoffset *filesize
+
+	runtime.NewAligned(&newoffset)
+
+	errno := fd_seek(int32(fd), filedelta(offset), uint32(whence), unsafe.Pointer(newoffset))
+	return int64(*newoffset), errnoErr(errno)
 }
 
 func Dup(fd int) (int, error) {

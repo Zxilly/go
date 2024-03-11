@@ -13,17 +13,17 @@ TEXT ·Compare(SB), NOSPLIT, $0-56
 	I32Load b_base+12(FP)
 	I32Load b_len+16(FP)
 	Call cmpbody<>(SB)
-	I32Store ret+24(FP)
+	I32Store ret+20(FP)
 	RET
 
-TEXT runtime·cmpstring(SB), NOSPLIT, $0-40
+TEXT runtime·cmpstring(SB), NOSPLIT, $0-24
 	Get SP
 	I32Load a_base+0(FP)
 	I32Load a_len+4(FP)
 	I32Load b_base+8(FP)
-	I32Load b_len+16(FP)
+	I32Load b_len+12(FP)
 	Call cmpbody<>(SB)
-	I32Store ret+24(FP)
+	I32Store ret+16(FP)
 	RET
 
 // params: a, alen, b, blen

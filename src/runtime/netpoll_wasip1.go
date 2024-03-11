@@ -48,16 +48,23 @@ func netpollinit() {
 	// timeout field needs to be submitted. Reserve a slot here for the clock
 	// subscription, and set fields that won't change between poll_oneoff calls.
 
-	subs = make([]subscription, 1, 128)
-	evts = make([]event, 0, 128)
-	pds = make([]*pollDesc, 0, 128)
+	var memSubs *[256]subscription
+	NewAligned(&memSubs)
 
-	timeout := &subs[0]
-	eventtype := timeout.u.eventtype()
-	*eventtype = eventtypeClock
-	clock := timeout.u.subscriptionClock()
-	clock.id = clockMonotonic
-	clock.precision = 1e3
+	subs = (*memSubs)[:1]
+
+	var memEvts *[256]event
+	NewAligned(&memEvts)
+
+	evts = (*memEvts)[:0]
+
+	var memPds *[256]*pollDesc
+	NewAligned(&memPds)
+	pds = (*memPds)[:0]
+
+	//subs = make([]subscription, 1, 128)
+	//evts = make([]event, 0, 128)
+	//pds = make([]*pollDesc, 0, 128)
 }
 
 func netpollIsPollDescriptor(fd uintptr) bool {
@@ -89,10 +96,7 @@ func netpollarm(pd *pollDesc, mode int) {
 
 	var s subscription
 
-	s.userdata = userdata(uintptr(unsafe.Pointer(pd)))
-
-	fdReadwrite := s.u.subscriptionFdReadwrite()
-	fdReadwrite.fd = int32(pd.fd)
+	s.setUserData(uint64(uintptr(unsafe.Pointer(pd))))
 
 	ridx := int(pd.user >> 16)
 	widx := int(pd.user & 0xFFFF)
@@ -102,13 +106,12 @@ func netpollarm(pd *pollDesc, mode int) {
 		return
 	}
 
-	eventtype := s.u.eventtype()
 	switch mode {
 	case 'r':
-		*eventtype = eventtypeFdRead
+		s.setFDRead(uint32(pd.fd))
 		ridx = len(subs)
 	case 'w':
-		*eventtype = eventtypeFdWrite
+		s.setFDWrite(uint32(pd.fd))
 		widx = len(subs)
 	}
 
@@ -142,8 +145,8 @@ func removesub(i int) {
 	}
 	j := len(subs) - 1
 
-	pdi := (*pollDesc)(unsafe.Pointer(uintptr(subs[i].userdata)))
-	pdj := (*pollDesc)(unsafe.Pointer(uintptr(subs[j].userdata)))
+	pdi := (*pollDesc)(unsafe.Pointer(uintptr(subs[i].userData())))
+	pdj := (*pollDesc)(unsafe.Pointer(uintptr(subs[j].userData())))
 
 	swapsub(pdi, i, disarmed)
 	swapsub(pdj, j, i)
@@ -193,8 +196,7 @@ func netpoll(delay int64) (gList, int32) {
 	pollsubs := subs
 	if delay >= 0 {
 		timeout := &subs[0]
-		clock := timeout.u.subscriptionClock()
-		clock.timeout = uint64(delay)
+		timeout.setClock(clockMonotonic, uint64(delay), 1e3, 0)
 	} else {
 		pollsubs = subs[1:]
 	}

@@ -139,6 +139,23 @@ func testAtomic64() {
 	}
 }
 
+//go:noinline
+func check1() {
+	var z uint32
+	check2(&z)
+}
+
+//go:noinline
+func check2(z *uint32) {
+	*z = 1
+	if !atomic.Cas(z, 1, 2) {
+		throw("cas1")
+	}
+	if *z != 2 {
+		throw("cas2")
+	}
+}
+
 func check() {
 	var (
 		a     int8
@@ -214,6 +231,8 @@ func check() {
 	if timediv(12345*1000000000+54321, 1000000000, &e) != 12345 || e != 54321 {
 		throw("bad timediv")
 	}
+
+	check1()
 
 	var z uint32
 	z = 1

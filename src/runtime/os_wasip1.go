@@ -6,11 +6,14 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 // GOARCH=wasm currently has 64 bits pointers, but the WebAssembly host expects
 // pointers to be 32 bits so we use this type alias to represent pointers in
 // structs and arrays passed as arguments to WASI functions.
+// GOARCH=wasm32 has 32 bit pointers but these values are still valid.
 //
 // Note that the use of an integer type prevents the compiler from tracking
 // pointers passed to WASI functions, so we must use KeepAlive to explicitly
@@ -77,9 +80,9 @@ func random_get(buf unsafe.Pointer, bufLen size) errno
 type eventtype = uint8
 
 const (
-	eventtypeClock eventtype = iota
-	eventtypeFdRead
-	eventtypeFdWrite
+	eventtypeClock   eventtype = 0
+	eventtypeFdRead  eventtype = 1
+	eventtypeFdWrite eventtype = 2
 )
 
 type eventrwflags = uint16
@@ -116,34 +119,43 @@ const (
 	subscriptionClockAbstime subclockflags = 1 << iota
 )
 
-type subscriptionClock struct {
-	id        clockid
-	timeout   timestamp
-	precision timestamp
-	flags     subclockflags
+type subscription [48]byte
+
+func (u *subscription) setUserData(ud uint64) {
+	le.PutUint64(u[0:], ud)
 }
 
-type subscriptionFdReadwrite struct {
-	fd int32
+func (u *subscription) userData() uint64 {
+	return le.Uint64(u[0:])
 }
 
-type subscription struct {
-	userdata userdata
-	u        subscriptionUnion
+func (u *subscription) setBody(t uint64) []byte {
+	le.PutUint64(u[8:], t)
+	return u[16:]
 }
 
-type subscriptionUnion [5]uint64
+var le littleEndian
 
-func (u *subscriptionUnion) eventtype() *eventtype {
-	return (*eventtype)(unsafe.Pointer(&u[0]))
+func (u *subscription) setClock(cid clockid, timeout, prec uint64, flags uint16) {
+	body := u.setBody(uint64(eventtypeClock))
+	le.PutUint32(body[0:], cid)
+
+	// it's 8 because it's using C, non-packed, alignment. Timeout is a
+	// 64bit quantity, so there is 4 padding bytes before it to keep it aligned
+	// on 8 byte boundaries.
+	le.PutUint64(body[8:], timeout)
+	le.PutUint64(body[16:], prec)
+	le.PutUint16(body[24:], flags)
 }
 
-func (u *subscriptionUnion) subscriptionClock() *subscriptionClock {
-	return (*subscriptionClock)(unsafe.Pointer(&u[1]))
+func (u *subscription) setFDRead(fd uint32) {
+	body := u.setBody(uint64(eventtypeFdRead))
+	le.PutUint32(body, fd)
 }
 
-func (u *subscriptionUnion) subscriptionFdReadwrite() *subscriptionFdReadwrite {
-	return (*subscriptionFdReadwrite)(unsafe.Pointer(&u[1]))
+func (u *subscription) setFDWrite(fd uint32) {
+	body := u.setBody(uint64(eventtypeFdWrite))
+	le.PutUint32(body, fd)
 }
 
 //go:wasmimport wasi_snapshot_preview1 poll_oneoff
@@ -163,19 +175,24 @@ func write1(fd uintptr, p unsafe.Pointer, n int32) int32 {
 }
 
 func usleep(usec uint32) {
-	var in subscription
-	var out event
+
+	var buf [128]byte
+
+	var slice []byte
+
+	if uintptr(unsafe.Pointer(&buf))%8 != 0 {
+		slice = buf[4:]
+	} else {
+		slice = buf[:]
+	}
+
+	in := subscription(slice[:48])
+	out := slice[48:]
 	var nevents size
 
-	eventtype := in.u.eventtype()
-	*eventtype = eventtypeClock
+	in.setClock(clockMonotonic, timestamp(usec)*1e3, 1e3, 0)
 
-	subscription := in.u.subscriptionClock()
-	subscription.id = clockMonotonic
-	subscription.timeout = timestamp(usec) * 1e3
-	subscription.precision = 1e3
-
-	if poll_oneoff(unsafe.Pointer(&in), unsafe.Pointer(&out), 1, unsafe.Pointer(&nevents)) != 0 {
+	if poll_oneoff(unsafe.Pointer(&in[0]), unsafe.Pointer(&out[0]), 1, unsafe.Pointer(&nevents)) != 0 {
 		throw("wasi_snapshot_preview1.poll_oneoff")
 	}
 }
@@ -244,17 +261,158 @@ func walltime() (sec int64, nsec int32) {
 }
 
 func walltime1() (sec int64, nsec int32) {
-	var time timestamp
-	if clock_time_get(clockRealtime, 0, unsafe.Pointer(&time)) != 0 {
+	timePtr := tmpUint64_1()
+
+	if clock_time_get(clockRealtime, 0, unsafe.Pointer(timePtr)) != 0 {
 		throw("clock_time_get failed")
 	}
+
+	time := timestamp(*timePtr)
 	return int64(time / 1000000000), int32(time % 1000000000)
 }
 
 func nanotime1() int64 {
-	var time timestamp
-	if clock_time_get(clockMonotonic, 0, unsafe.Pointer(&time)) != 0 {
+	timePtr := tmpUint64_1()
+
+	if clock_time_get(clockMonotonic, 0, unsafe.Pointer(timePtr)) != 0 {
 		throw("clock_time_get failed")
 	}
-	return int64(time)
+
+	return int64(*timePtr)
+}
+
+// This is a bit of a hack because wasi expects 8 byte aligned pointers
+// when the return value is a uint64, but the wasm32 port doesn't adher
+// to managing the stack at 8 byte alignment. So because we don't have
+// real threads anyway, we effectively use a set of globals as 8 byte
+// aligned pointers, knowing that (at present) there is no chance that
+// another goroutine can be running and reuse the same pointer. Note that
+// the pointers are grab, passed to WASI, then read in the same function
+// always.
+type tmpStackS struct {
+	_ [1024]byte
+}
+
+var tmpStack tmpStackS
+
+func tmpUint64_1() *uint64 {
+	ptr := uintptr(unsafe.Pointer(&tmpStack))
+
+	if ptr%8 != 0 {
+		ptr += 8 - (ptr % 8)
+	}
+
+	return (*uint64)(unsafe.Pointer(ptr))
+}
+
+func tmpUint64_2() *uint64 {
+	ptr := uintptr(unsafe.Pointer(&tmpStack))
+
+	ptr += 16
+
+	if ptr%8 != 0 {
+		ptr += 8 - (ptr % 8)
+	}
+
+	return (*uint64)(unsafe.Pointer(ptr))
+}
+
+// This is a weird one. We use generics to allocate various configurations
+// of T to find one that is allocated on an 8 byte boundary. This is wasteful
+// but it allows the GC to track the returned value correctly so we don't have
+// to use a pool of already aligned values.
+func NewAligned[T any](t **T) {
+	v0 := new(T)
+	if uintptr(unsafe.Pointer(v0))%8 == 0 {
+		*t = v0
+		return
+	}
+
+	v2 := new(struct {
+		_ [2]byte
+		t T
+	})
+	if uintptr(unsafe.Pointer(&v2.t))%8 == 0 {
+		*t = &v2.t
+		return
+	}
+
+	v4 := new(struct {
+		_ [4]byte
+		t T
+	})
+	if uintptr(unsafe.Pointer(&v4.t))%8 == 0 {
+		*t = &v4.t
+		return
+	}
+
+	v6 := new(struct {
+		_ [6]byte
+		t T
+	})
+	if uintptr(unsafe.Pointer(&v6.t))%8 == 0 {
+		*t = &v6.t
+		return
+	}
+
+	v8 := new(struct {
+		_ [8]byte
+		t T
+	})
+	if uintptr(unsafe.Pointer(&v8.t))%8 == 0 {
+		*t = &v8.t
+		return
+	}
+
+	println("0ptr= ", uintptr(unsafe.Pointer(v0)))
+	println("2ptr= ", uintptr(unsafe.Pointer(&v2.t)))
+	println("4ptr= ", uintptr(unsafe.Pointer(&v4.t)))
+	println("6ptr= ", uintptr(unsafe.Pointer(&v6.t)))
+	println("8ptr= ", uintptr(unsafe.Pointer(&v8.t)))
+
+	throw("failed to allocate aligned value")
+}
+
+type littleEndian struct{}
+
+func (littleEndian) Uint16(b []byte) uint16 {
+	_ = b[1] // bounds check hint to compiler; see golang.org/issue/14808
+	return uint16(b[0]) | uint16(b[1])<<8
+}
+
+func (littleEndian) PutUint16(b []byte, v uint16) {
+	_ = b[1] // early bounds check to guarantee safety of writes below
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+}
+
+func (littleEndian) Uint32(b []byte) uint32 {
+	_ = b[3] // bounds check hint to compiler; see golang.org/issue/14808
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
+}
+
+func (littleEndian) PutUint32(b []byte, v uint32) {
+	_ = b[3] // early bounds check to guarantee safety of writes below
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+}
+
+func (littleEndian) Uint64(b []byte) uint64 {
+	_ = b[7] // bounds check hint to compiler; see golang.org/issue/14808
+	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
+		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
+}
+
+func (littleEndian) PutUint64(b []byte, v uint64) {
+	_ = b[7] // early bounds check to guarantee safety of writes below
+	b[0] = byte(v)
+	b[1] = byte(v >> 8)
+	b[2] = byte(v >> 16)
+	b[3] = byte(v >> 24)
+	b[4] = byte(v >> 32)
+	b[5] = byte(v >> 40)
+	b[6] = byte(v >> 48)
+	b[7] = byte(v >> 56)
 }

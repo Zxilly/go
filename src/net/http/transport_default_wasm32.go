@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build !wasm && !wasm32
+//go:build (js && wasm32) || wasip1
 
 package http
 
@@ -12,5 +12,5 @@ import (
 )
 
 func defaultTransportDialContext(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
-	return dialer.DialContext
+	return nil
 }
