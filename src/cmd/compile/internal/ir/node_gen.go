@@ -421,6 +421,9 @@ func (n *CallExpr) doChildrenWithHidden(do func(Node) bool) bool {
 	if n.RType != nil && do(n.RType) {
 		return true
 	}
+	if n.DeferAt != nil && do(n.DeferAt) {
+		return true
+	}
 	if doNames(n.KeepAlive, do) {
 		return true
 	}
@@ -1209,6 +1212,9 @@ func (n *InterfaceSwitchStmt) doChildrenWithHidden(do func(Node) bool) bool {
 		return true
 	}
 	if n.RuntimeType != nil && do(n.RuntimeType) {
+		return true
+	}
+	if n.Hash != nil && do(n.Hash) {
 		return true
 	}
 	if n.Hash != nil && do(n.Hash) {

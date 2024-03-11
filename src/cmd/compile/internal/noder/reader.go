@@ -1140,7 +1140,7 @@ func (r *reader) funcExt(name *ir.Name, method *types.Sym) {
 	fn.Pragma = r.pragmaFlag()
 	r.linkname(name)
 
-	if buildcfg.GOARCH == "wasm" {
+	if buildcfg.GOARCH == "wasm" || buildcfg.GOARCH == "wasm32" {
 		importmod := r.String()
 		importname := r.String()
 		exportname := r.String()
