@@ -40,3 +40,8 @@ The `go vet` command includes new analyzers:
   construct addresses for [net.Dial], as these will not work with
   IPv6; instead it suggests using [net.JoinHostPort].
 
+
+### Compiler Toolchain {#compiler}
+
+The DWARF debug information recorded in binaries has contained string constants
+now.
