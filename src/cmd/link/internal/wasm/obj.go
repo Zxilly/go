@@ -9,7 +9,9 @@ import (
 	"cmd/link/internal/ld"
 )
 
-func Init() (*sys.Arch, ld.Arch) {
+var wasm64Bit bool
+
+func Init(is64Bit bool) (*sys.Arch, ld.Arch) {
 	theArch := ld.Arch{
 		Funcalign: 16,
 		Maxalign:  32,
@@ -21,6 +23,8 @@ func Init() (*sys.Arch, ld.Arch) {
 		Asmb2:         asmb2,
 		Gentext:       gentext,
 	}
+
+	wasm64Bit = is64Bit
 
 	return sys.ArchWasm, theArch
 }

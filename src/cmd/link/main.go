@@ -17,7 +17,6 @@ import (
 	"cmd/link/internal/riscv64"
 	"cmd/link/internal/s390x"
 	"cmd/link/internal/wasm"
-	"cmd/link/internal/wasm32"
 	"cmd/link/internal/x86"
 	"fmt"
 	"internal/buildcfg"
@@ -68,9 +67,9 @@ func main() {
 	case "s390x":
 		arch, theArch = s390x.Init()
 	case "wasm":
-		arch, theArch = wasm.Init()
+		arch, theArch = wasm.Init(true)
 	case "wasm32":
-		arch, theArch = wasm32.Init()
+		arch, theArch = wasm.Init(false)
 	}
 	ld.Main(arch, theArch)
 }
