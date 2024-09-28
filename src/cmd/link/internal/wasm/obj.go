@@ -9,8 +9,6 @@ import (
 	"cmd/link/internal/ld"
 )
 
-var wasm64Bit bool
-
 func Init(is64Bit bool) (*sys.Arch, ld.Arch) {
 	theArch := ld.Arch{
 		Funcalign: 16,
@@ -24,9 +22,10 @@ func Init(is64Bit bool) (*sys.Arch, ld.Arch) {
 		Gentext:       gentext,
 	}
 
-	wasm64Bit = is64Bit
-
-	return sys.ArchWasm, theArch
+	if is64Bit {
+		return sys.ArchWasm, theArch
+	}
+	return sys.ArchWasm32, theArch
 }
 
 func archinit(ctxt *ld.Link) {

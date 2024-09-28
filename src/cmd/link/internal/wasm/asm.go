@@ -65,39 +65,39 @@ func readWasmImport(ldr *loader.Loader, s loader.Sym) obj.WasmImport {
 	return wi
 }
 
-func getWasmFuncTypes() map[string]*wasmFuncType {
-	var ptrSize byte
+func getWasmFuncTypes(wasm64Bit bool) map[string]*wasmFuncType {
+	var IType byte
 	if wasm64Bit {
-		ptrSize = I64
+		IType = I64
 	} else {
-		ptrSize = I32
+		IType = I32
 	}
 
 	types := map[string]*wasmFuncType{
-		"_rt0_wasm_js":            {Params: []byte{}},                                                             //
-		"_rt0_wasm_wasip1_lib":    {Params: []byte{}},                                                             //
-		"wasm_export__start":      {},                                                                             //
-		"wasm_export_run":         {Params: []byte{I32, I32}},                                                     // argc, argv
-		"wasm_export_resume":      {Params: []byte{}},                                                             //
-		"wasm_export_getsp":       {Results: []byte{I32}},                                                         // sp
-		"wasm_pc_f_loop":          {Params: []byte{}},                                                             //
-		"wasm_pc_f_loop_export":   {Params: []byte{I32}},                                                          // pc_f
-		"runtime.wasmDiv":         {Params: []byte{ptrSize, ptrSize}, Results: []byte{ptrSize}},                   // x, y -> x/y
-		"runtime.wasmTruncS":      {Params: []byte{F64}, Results: []byte{ptrSize}},                                // x -> int(x)
-		"runtime.wasmTruncU":      {Params: []byte{F64}, Results: []byte{ptrSize}},                                // x -> uint(x)
-		"gcWriteBarrier":          {Params: []byte{ptrSize}, Results: []byte{ptrSize}},                            // #bytes -> bufptr
-		"runtime.gcWriteBarrier1": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier2": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier3": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier4": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier5": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier6": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier7": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"runtime.gcWriteBarrier8": {Results: []byte{ptrSize}},                                                     // -> bufptr
-		"cmpbody":                 {Params: []byte{ptrSize, ptrSize, ptrSize, ptrSize}, Results: []byte{ptrSize}}, // a, alen, b, blen -> -1/0/1
-		"memeqbody":               {Params: []byte{ptrSize, ptrSize, ptrSize}, Results: []byte{ptrSize}},          // a, b, len -> 0/1
-		"memcmp":                  {Params: []byte{I32, I32, I32}, Results: []byte{I32}},                          // a, b, len -> <0/0/>0
-		"memchr":                  {Params: []byte{I32, I32, I32}, Results: []byte{I32}},                          // s, c, len -> index
+		"_rt0_wasm_js":            {Params: []byte{}},                                                   //
+		"_rt0_wasm_wasip1_lib":    {Params: []byte{}},                                                   //
+		"wasm_export__start":      {},                                                                   //
+		"wasm_export_run":         {Params: []byte{I32, I32}},                                           // argc, argv
+		"wasm_export_resume":      {Params: []byte{}},                                                   //
+		"wasm_export_getsp":       {Results: []byte{I32}},                                               // sp
+		"wasm_pc_f_loop":          {Params: []byte{}},                                                   //
+		"wasm_pc_f_loop_export":   {Params: []byte{I32}},                                                // pc_f
+		"runtime.wasmDiv":         {Params: []byte{IType, IType}, Results: []byte{IType}},               // x, y -> x/y
+		"runtime.wasmTruncS":      {Params: []byte{F64}, Results: []byte{IType}},                        // x -> int(x)
+		"runtime.wasmTruncU":      {Params: []byte{F64}, Results: []byte{IType}},                        // x -> uint(x)
+		"gcWriteBarrier":          {Params: []byte{IType}, Results: []byte{IType}},                      // #bytes -> bufptr
+		"runtime.gcWriteBarrier1": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier2": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier3": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier4": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier5": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier6": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier7": {Results: []byte{IType}},                                             // -> bufptr
+		"runtime.gcWriteBarrier8": {Results: []byte{IType}},                                             // -> bufptr
+		"cmpbody":                 {Params: []byte{IType, IType, IType, IType}, Results: []byte{IType}}, // a, alen, b, blen -> -1/0/1
+		"memeqbody":               {Params: []byte{IType, IType, IType}, Results: []byte{IType}},        // a, b, len -> 0/1
+		"memcmp":                  {Params: []byte{I32, I32, I32}, Results: []byte{I32}},                // a, b, len -> <0/0/>0
+		"memchr":                  {Params: []byte{I32, I32, I32}, Results: []byte{I32}},                // s, c, len -> index
 	}
 
 	if wasm64Bit {
@@ -211,7 +211,7 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	}
 
 	// build wasm function types map based on bit
-	wasmFuncTypes := getWasmFuncTypes()
+	wasmFuncTypes := getWasmFuncTypes(ctxt.Arch.RegSize == 8)
 
 	// collect functions with WebAssembly body
 	var buildid []byte
@@ -416,22 +416,22 @@ func writeMemorySec(ctxt *ld.Link, ldr *loader.Loader) {
 func writeGlobalSec(ctxt *ld.Link) {
 	sizeOffset := writeSecHeader(ctxt, sectionGlobal)
 
-	var ptrSize byte
-	if wasm64Bit {
-		ptrSize = I64
+	var regIType byte
+	if ctxt.Arch.PtrSize == 8 {
+		regIType = I64
 	} else {
-		ptrSize = I32
+		regIType = I32
 	}
 
 	globalRegs := []byte{
-		I32,     // 0: SP
-		ptrSize, // 1: CTXT
-		ptrSize, // 2: g
-		ptrSize, // 3: RET0
-		ptrSize, // 4: RET1
-		ptrSize, // 5: RET2
-		ptrSize, // 6: RET3
-		I32,     // 7: PAUSE
+		I32,      // 0: SP
+		regIType, // 1: CTXT
+		regIType, // 2: g
+		regIType, // 3: RET0
+		regIType, // 4: RET1
+		regIType, // 5: RET2
+		regIType, // 6: RET3
+		I32,      // 7: PAUSE
 	}
 
 	writeUleb128(ctxt.Out, uint64(len(globalRegs))) // number of globals
@@ -463,7 +463,7 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 		var entry, entryExpName string
 		switch ctxt.BuildMode {
 		case ld.BuildModeExe:
-			if wasm64Bit {
+			if ctxt.Arch.RegSize == 8 {
 				entry = "_rt0_wasm_wasip1"
 			} else {
 				entry = "_rt0_wasm32_wasip1"
