@@ -704,8 +704,8 @@ func TestGdbConst(t *testing.T) {
 		"-ex", "print main.stringConstant",
 		filepath.Join(dir, "a.exe"),
 	}
-	gdbArgsFixup(args)
-	got, err := exec.Command("gdb", args...).CombinedOutput()
+	// gdbArgsFixup(args)
+	got, err := exec.Command("E:\\msys64\\ucrt64\\bin\\gdb.exe", args...).CombinedOutput()
 	t.Logf("gdb output:\n%s", got)
 	if err != nil {
 		t.Fatalf("gdb exited with error: %v", err)

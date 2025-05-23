@@ -20,7 +20,6 @@ import (
 	"cmd/internal/objabi"
 	"encoding/json"
 	"fmt"
-	"go/constant"
 	"strings"
 )
 
@@ -194,11 +193,8 @@ func dumpGlobalConst(n *ir.Name) {
 			_ = reflectdata.TypeLinksym(t)
 		}
 		base.Ctxt.DwarfIntConst(n.Sym().Name, types.TypeSymName(t), ir.IntVal(t, v))
-	} else {
-		if !t.IsUntyped() {
-			_ = reflectdata.TypeLinksym(t)
-		}
-		base.Ctxt.DwarfStringConst(n.Sym().Name, constant.StringVal(v))
+	} else if t.IsString() {
+		base.Ctxt.DwarfStringConst(n.Sym().Name, types.TypeSymName(t))
 	}
 }
 

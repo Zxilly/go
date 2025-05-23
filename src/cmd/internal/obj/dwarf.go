@@ -419,7 +419,7 @@ func (ctxt *Link) DwarfStringConst(name string, val string) {
 		ctxt.Data = append(ctxt.Data, s)
 	})
 
-	dwarf.PutStringConst(dwCtxt{ctxt}, s, myimportpath+"."+name, val)
+	dwarf.PutStringConst(dwCtxt{ctxt}, s, ctxt.Lookup(dwarf.InfoPrefix+typename), myimportpath+"."+name)
 }
 
 // DwarfGlobal creates a link symbol containing a DWARF entry for
