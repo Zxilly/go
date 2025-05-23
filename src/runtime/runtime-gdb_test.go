@@ -662,6 +662,7 @@ package main
 const aConstant int = 42
 const largeConstant uint64 = ^uint64(0)
 const minusOne int64 = -1
+const aStringConstant string = "hello dwarf"
 
 func main() {
 	println("hello world")
@@ -698,6 +699,8 @@ func TestGdbConst(t *testing.T) {
 		"-ex", "print main.aConstant",
 		"-ex", "print main.largeConstant",
 		"-ex", "print main.minusOne",
+		"-ex", "print main.aStringConstant",
+		"-ex", "ptype main.aStringConstant",
 		"-ex", "print 'runtime.mSpanInUse'",
 		"-ex", "print 'runtime._PageSize'",
 		filepath.Join(dir, "a.exe"),
@@ -711,7 +714,7 @@ func TestGdbConst(t *testing.T) {
 
 	sgot := strings.ReplaceAll(string(got), "\r\n", "\n")
 
-	if !strings.Contains(sgot, "\n$1 = 42\n$2 = 18446744073709551615\n$3 = -1\n$4 = 1 '\\001'\n$5 = 8192") {
+	if !strings.Contains(sgot, "\n$1 = 42\n$2 = 18446744073709551615\n$3 = -1\n$4 = \"hello dwarf\"\n$5 = 1 '\\001'\n$6 = 8192") {
 		t.Fatalf("output mismatch")
 	}
 }

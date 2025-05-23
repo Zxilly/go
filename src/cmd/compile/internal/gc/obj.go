@@ -15,6 +15,7 @@ import (
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/archive"
+	"go/constant"
 	"cmd/internal/bio"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
@@ -175,23 +176,32 @@ func dumpGlobalConst(n *ir.Name) {
 	if n.Sym().Pkg != types.LocalPkg {
 		return
 	}
-	// only export integer constants for now
-	if !t.IsInteger() {
-		return
-	}
-	v := n.Val()
-	if t.IsUntyped() {
-		// Export untyped integers as int (if they fit).
-		t = types.Types[types.TINT]
-		if ir.ConstOverflow(v, t) {
-			return
+	// Export integer and string constants.
+	if t.IsInteger() {
+		v := n.Val()
+		if t.IsUntyped() {
+			// Export untyped integers as int (if they fit).
+			t = types.Types[types.TINT]
+			if ir.ConstOverflow(v, t) {
+				return
+			}
+		} else {
+			// If the type of the constant is an instantiated generic, we need to emit
+			// that type so the linker knows about it. See issue 51245.
+			_ = reflectdata.TypeLinksym(t)
 		}
-	} else {
-		// If the type of the constant is an instantiated generic, we need to emit
-		// that type so the linker knows about it. See issue 51245.
-		_ = reflectdata.TypeLinksym(t)
+		base.Ctxt.DwarfIntConst(n.Sym().Name, types.TypeSymName(t), ir.IntVal(t, v))
+	} else if t.IsString() {
+		v := n.Val()
+		strVal := constant.StringVal(v)
+		if !t.IsUntyped() {
+			// If the type of the constant is an instantiated generic, we need to emit
+			// that type so the linker knows about it. See issue 51245.
+			// Also applies to distinct string types e.g. type MyString string.
+			_ = reflectdata.TypeLinksym(t)
+		}
+		base.Ctxt.DwarfStringConst(n.Sym().Name, types.TypeSymName(t), strVal)
 	}
-	base.Ctxt.DwarfIntConst(n.Sym().Name, types.TypeSymName(t), ir.IntVal(t, v))
 }
 
 // addGCLocals adds gcargs, gclocals, gcregs, and stack object symbols to Ctxt.Data.
