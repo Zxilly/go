@@ -414,11 +414,32 @@ func (ctxt *Link) DwarfStringConst(name, typeName string, val string) {
 	if myimportpath == "" {
 		return
 	}
+	// s is the symbol for the DWARF constant DIE itself.
 	s := ctxt.LookupInit(dwarf.ConstInfoPrefix+myimportpath, func(s *LSym) {
-		s.Type = objabi.SDWARFCONST
+		s.Type = objabi.SDWARFCONST // This symbol describes the DWARF constant entry.
 		ctxt.Data = append(ctxt.Data, s)
 	})
-	dwarf.PutStringConst(dwCtxt{ctxt}, s, ctxt.Lookup(dwarf.InfoPrefix+typeName), myimportpath+"."+name, val)
+
+	// Create a new LSym to hold the actual string data.
+	// This symbol will be referenced by the DW_AT_location attribute of the DWARF constant DIE.
+	// The name should be unique; using a prefix and the original constant's name is a good strategy.
+	stringDataSymName := "go:stringval." + myimportpath + "." + name
+	stringDataSym := ctxt.Lookup(stringDataSymName, 0)
+
+	if stringDataSym.Type == 0 { // If it's a new symbol, define it.
+		stringDataSym.Type = objabi.SRODATA // Read-only data.
+		stringDataSym.P = []byte(val)
+		stringDataSym.Size = int64(len(val))
+		// SRODATA symbols are part of ctxt.Data and will be emitted by the linker.
+		// They are typically local to the object/package unless explicitly marked for export.
+		// No need for AttrStatic here as LSyms don't have that field directly,
+		// and SRODATA implies it's not executable and part of the data section.
+		ctxt.Data = append(ctxt.Data, stringDataSym) // Ensure this data symbol is included in the object file.
+	}
+
+	// Call the dwarf package function to emit the DWARF information for the string constant.
+	// The last argument is the symbol (stringDataSym) whose address will be used for DW_AT_location.
+	dwarf.PutStringConst(dwCtxt{ctxt}, s, ctxt.Lookup(dwarf.InfoPrefix+typeName), myimportpath+"."+name, stringDataSym)
 }
 
 // DwarfGlobal creates a link symbol containing a DWARF entry for

@@ -594,7 +594,7 @@ var abbrevs = []dwAbbrev{
 		[]dwAttrForm{
 			{DW_AT_name, DW_FORM_string},
 			{DW_AT_type, DW_FORM_ref_addr},
-			{DW_AT_const_value, DW_FORM_string}, // Use DW_FORM_string for the constant's value
+			{DW_AT_location, DW_FORM_block1}, // Changed line
 		},
 	},
 
@@ -1044,11 +1044,11 @@ func PutIntConst(ctxt Context, info, typ Sym, name string, val int64) {
 }
 
 // PutStringConst writes a DIE for a string constant
-func PutStringConst(ctxt Context, info, typ Sym, name string, val string) {
+func PutStringConst(ctxt Context, info, typ Sym, name string, valSym Sym) {
 	Uleb128put(ctxt, info, DW_ABRV_STRING_CONSTANT)
 	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
 	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, typ)
-	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(val)), val)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_block1, DW_CLS_ADDRESS, 0, valSym)
 }
 
 // PutGlobal writes a DIE for a global variable.
