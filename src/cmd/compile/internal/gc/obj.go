@@ -18,6 +18,7 @@ import (
 	"cmd/internal/bio"
 	"cmd/internal/obj"
 	"cmd/internal/objabi"
+	"cmd/internal/dwarf" // Import dwarf package
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -166,6 +167,34 @@ func dumpGlobal(n *ir.Name) {
 	base.Ctxt.DwarfGlobal(types.TypeSymName(n.Type()), n.Linksym())
 }
 
+// dwarfStringConstTypeSym holds the DWARF symbol for the "const string" type.
+// It's initialized once per compilation unit.
+var dwarfStringConstTypeSym *obj.LSym
+
+// getOrInitDwarfStringConstTypeSym ensures the DWARF "const string" type symbol is created and initialized once.
+func getOrInitDwarfStringConstTypeSym() *obj.LSym {
+	if dwarfStringConstTypeSym == nil {
+		s := base.Ctxt.Lookup(dwarf.InfoPrefix + ".string_const_type")
+		s.Set(obj.AttrReadOnly, true)
+		s.Set(obj.AttrLocal, true) // It's an auxiliary type, not meant for direct linking.
+		s.Type = objabi.SDWARFINFO // Mark as a DWARF informational entry.
+		// base.Ctxt provides the dwarf.Context. PutStringConstType defines the DIE.
+		dwarf.PutStringConstType(base.Ctxt, s, s, "const string")
+		dwarfStringConstTypeSym = s
+	}
+	return dwarfStringConstTypeSym
+}
+
+// createDwarfConstSymAndPut creates a DWARF symbol for a constant value, sets its basic attributes,
+// and then calls populateDieFn to fill in the DWARF information.
+func createDwarfConstSymAndPut(dwarfConstantSymName string, populateDieFn func(createdSym *obj.LSym)) {
+	dwarfSym := base.Ctxt.Lookup(dwarfConstantSymName)
+	dwarfSym.Set(obj.AttrReadOnly, true)
+	dwarfSym.Set(obj.AttrLocal, true) // DWARF constants are generally not linked against by name.
+	dwarfSym.Type = objabi.SDWARFCONST // Mark as a DWARF constant value entry.
+	populateDieFn(dwarfSym)
+}
+
 func dumpGlobalConst(n *ir.Name) {
 	// only export typed constants
 	t := n.Type()
@@ -175,23 +204,60 @@ func dumpGlobalConst(n *ir.Name) {
 	if n.Sym().Pkg != types.LocalPkg {
 		return
 	}
-	// only export integer constants for now
-	if !t.IsInteger() {
-		return
-	}
-	v := n.Val()
-	if t.IsUntyped() {
-		// Export untyped integers as int (if they fit).
-		t = types.Types[types.TINT]
-		if ir.ConstOverflow(v, t) {
+
+	// Initialize string const type symbol (no-op if already done)
+	strTypeSym := getOrInitDwarfStringConstTypeSym()
+
+	constName := n.Sym().Name // Common for all constant types
+
+	if t.IsInteger() || t.IsBoolean() {
+		// Handle integer and boolean constants.
+		// Booleans are typically represented as integers in DWARF (e.g., 0 or 1).
+		v := n.Val()
+		dtype := t // Use the original type for value interpretation and type name.
+		if t.IsUntyped() {
+			// Default untyped integers to 'int', untyped booleans to 'bool'.
+			if t.IsBoolean() {
+				dtype = types.Types[types.TBOOL]
+			} else {
+				dtype = types.Types[types.TINT]
+			}
+			// Check for overflow only if it's not a boolean (booleans won't overflow standard types).
+			if !t.IsBoolean() && ir.ConstOverflow(v, dtype) {
+				return
+			}
+		} else {
+			// For typed constants, including named boolean types, ensure their type is resolvable.
+			// If the type of the constant is an instantiated generic, we need to emit
+			// that type so the linker knows about it. See issue 51245.
+			_ = reflectdata.TypeLinksym(dtype) // Ensures type symbol is created if generic.
+		}
+
+		// The DWARF type symbol for "int", "bool", etc.
+		actualTypeSym := base.Ctxt.Lookup(dwarf.InfoPrefix + types.TypeSymName(dtype))
+		val := ir.IntVal(dtype, v)
+
+		createDwarfConstSymAndPut(dwarf.ConstInfoPrefix+constName, func(newDwarfSym *obj.LSym) {
+			dwarf.PutIntConst(base.Ctxt, newDwarfSym, actualTypeSym, constName, val)
+		})
+
+	} else if t.IsString() {
+		// Handle string constants.
+		if n.Val() == nil || n.Val().U == nil { // Ensure Val and Val.U are not nil
+			base.Errorf("dumpGlobalConst: string constant %v has nil Val or Val.U", n)
 			return
 		}
-	} else {
-		// If the type of the constant is an instantiated generic, we need to emit
-		// that type so the linker knows about it. See issue 51245.
-		_ = reflectdata.TypeLinksym(t)
+		strVal, ok := n.Val().U.(string)
+		if !ok {
+			base.Errorf("dumpGlobalConst: expected string value for %v, got %T", n, n.Val().U)
+			return
+		}
+
+		createDwarfConstSymAndPut(dwarf.ConstInfoPrefix+constName, func(newDwarfSym *obj.LSym) {
+			dwarf.PutStringConst(base.Ctxt, newDwarfSym, strTypeSym, constName, strVal)
+		})
 	}
-	base.Ctxt.DwarfIntConst(n.Sym().Name, types.TypeSymName(t), ir.IntVal(t, v))
+	// Other types of constants (e.g., floats, complex) are not currently handled for DWARF.
 }
 
 // addGCLocals adds gcargs, gclocals, gcregs, and stack object symbols to Ctxt.Data.

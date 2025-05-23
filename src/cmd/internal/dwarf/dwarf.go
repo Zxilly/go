@@ -336,6 +336,7 @@ const (
 	DW_ABRV_INLINED_SUBROUTINE_RANGES
 	DW_ABRV_VARIABLE
 	DW_ABRV_INT_CONSTANT
+	DW_ABRV_STRING_CONSTANT // New DWARF abbreviation for string constant
 	DW_ABRV_LEXICAL_BLOCK_RANGES
 	DW_ABRV_LEXICAL_BLOCK_SIMPLE
 	DW_ABRV_STRUCTFIELD
@@ -357,6 +358,7 @@ const (
 	DW_ABRV_STRUCTTYPE
 	DW_ABRV_TYPEDECL
 	DW_ABRV_DICT_INDEX
+	DW_ABRV_STRING_TYPE_CONST // New DWARF abbreviation for string constant type
 	DW_ABRV_PUTVAR_START
 )
 
@@ -583,6 +585,17 @@ var abbrevs = []dwAbbrev{
 			{DW_AT_name, DW_FORM_string},
 			{DW_AT_type, DW_FORM_ref_addr},
 			{DW_AT_const_value, DW_FORM_sdata},
+		},
+	},
+
+	/* STRING CONSTANT */
+	{
+		DW_TAG_constant,
+		DW_CHILDREN_no,
+		[]dwAttrForm{
+			{DW_AT_name, DW_FORM_string},
+			{DW_AT_type, DW_FORM_ref_addr},     // Refers to DW_ABRV_STRING_TYPE_CONST DIE
+			{DW_AT_const_value, DW_FORM_string}, // Actual string value
 		},
 	},
 
@@ -839,6 +852,20 @@ var abbrevs = []dwAbbrev{
 			{DW_AT_go_dict_index, DW_FORM_udata},
 		},
 	},
+
+	/* STRING_TYPE_CONST */
+	// This is for a type representing a "const string".
+	// DW_TAG_string_type is not standard DWARF. Using DW_TAG_base_type as a placeholder.
+	// The actual name attribute (e.g., "const string") will distinguish it.
+	{
+		DW_TAG_base_type, // Placeholder for DW_TAG_string_type
+		DW_CHILDREN_no,
+		[]dwAttrForm{
+			{DW_AT_name, DW_FORM_string},           // e.g., "const string"
+			{DW_AT_encoding, DW_FORM_data1},        // e.g., DW_ATE_UTF
+			{DW_AT_byte_size, DW_FORM_data1},       // e.g., 0, as per instructions
+		},
+	},
 }
 
 // GetAbbrev returns the contents of the .debug_abbrev section.
@@ -1029,6 +1056,27 @@ func PutIntConst(ctxt Context, info, typ Sym, name string, val int64) {
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, typ)
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_sdata, DW_CLS_CONSTANT, val, nil)
+}
+
+// PutStringConstType writes a DIE for a "const string" type.
+// s is the symbol for the DIE itself. nameSym is currently unused but kept for signature consistency if needed later.
+func PutStringConstType(ctxt Context, s Sym, nameSym Sym, name string) {
+	Uleb128put(ctxt, s, DW_ABRV_STRING_TYPE_CONST)
+	putattr(ctxt, s, DW_ABRV_STRING_TYPE_CONST, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
+	putattr(ctxt, s, DW_ABRV_STRING_TYPE_CONST, DW_FORM_data1, DW_CLS_CONSTANT, DW_ATE_UTF, nil) // DW_AT_encoding
+	putattr(ctxt, s, DW_ABRV_STRING_TYPE_CONST, DW_FORM_data1, DW_CLS_CONSTANT, 0, nil)          // DW_AT_byte_size
+}
+
+// PutStringConst writes a DIE for a string constant.
+// info is the symbol for the DIE itself.
+// typ is the symbol for the type DIE of this constant.
+// name is the name of the constant.
+// val is the string value of the constant.
+func PutStringConst(ctxt Context, info Sym, typ Sym, name string, val string) {
+	Uleb128put(ctxt, info, DW_ABRV_STRING_CONSTANT)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, typ)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(val)), val)
 }
 
 // PutGlobal writes a DIE for a global variable.
