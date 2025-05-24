@@ -336,6 +336,8 @@ const (
 	DW_ABRV_INLINED_SUBROUTINE_RANGES
 	DW_ABRV_VARIABLE
 	DW_ABRV_INT_CONSTANT
+	DW_ABRV_STRING_CONSTANT
+	DW_ABRV_STRING_CONSTANTTYPE
 	DW_ABRV_LEXICAL_BLOCK_RANGES
 	DW_ABRV_LEXICAL_BLOCK_SIMPLE
 	DW_ABRV_STRUCTFIELD
@@ -575,7 +577,7 @@ var abbrevs = []dwAbbrev{
 		},
 	},
 
-	/* INT CONSTANT */
+	/* INT_CONSTANT */
 	{
 		DW_TAG_constant,
 		DW_CHILDREN_no,
@@ -583,6 +585,26 @@ var abbrevs = []dwAbbrev{
 			{DW_AT_name, DW_FORM_string},
 			{DW_AT_type, DW_FORM_ref_addr},
 			{DW_AT_const_value, DW_FORM_sdata},
+		},
+	},
+
+	/* STRING_CONSTANT */
+	{
+		DW_TAG_constant,
+		DW_CHILDREN_no,
+		[]dwAttrForm{
+			{DW_AT_name, DW_FORM_string},
+			{DW_AT_type, DW_FORM_ref_addr},
+			{DW_AT_const_value, DW_FORM_string},
+		},
+	},
+
+	/* STRING_CONSTANTTYPE */
+	{
+		DW_TAG_string_type,
+		DW_CHILDREN_no,
+		[]dwAttrForm{
+			{DW_AT_name, DW_FORM_string},
 		},
 	},
 
@@ -1029,6 +1051,18 @@ func PutIntConst(ctxt Context, info, typ Sym, name string, val int64) {
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, typ)
 	putattr(ctxt, info, DW_ABRV_INT_CONSTANT, DW_FORM_sdata, DW_CLS_CONSTANT, val, nil)
+}
+
+func PutStringConst(ctxt Context, info, typ Sym, name string, val string) {
+	Uleb128put(ctxt, info, DW_ABRV_STRING_CONSTANT)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_ref_addr, DW_CLS_REFERENCE, 0, typ)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANT, DW_FORM_string, DW_CLS_STRING, int64(len(val)), val)
+}
+
+func PutStringConstType(ctxt Context, info Sym, name string) {
+	Uleb128put(ctxt, info, DW_ABRV_STRING_CONSTANTTYPE)
+	putattr(ctxt, info, DW_ABRV_STRING_CONSTANTTYPE, DW_FORM_string, DW_CLS_STRING, int64(len(name)), name)
 }
 
 // PutGlobal writes a DIE for a global variable.

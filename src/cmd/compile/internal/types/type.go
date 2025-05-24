@@ -1406,7 +1406,7 @@ func (t *Type) HasNil() bool {
 }
 
 func (t *Type) IsString() bool {
-	return t.kind == TSTRING
+	return t.kind == TSTRING || t == UntypedString
 }
 
 func (t *Type) IsMap() bool {
