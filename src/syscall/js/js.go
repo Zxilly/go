@@ -4,7 +4,8 @@
 
 //go:build js && (wasm || wasm32)
 
-// Package js gives access to the WebAssembly host environment when using the js/wasm architecture.
+// Package js gives access to the WebAssembly host environment when using the
+// js/wasm or js/wasm32 architecture.
 // Its API is based on JavaScript semantics.
 //
 // This package is EXPERIMENTAL. Its current scope is only to allow tests to run, but not yet to provide a

@@ -38,6 +38,8 @@ var globalRegs = [...]byte{
 	I32, // 7: PAUSE
 }
 
+const goPtrSizeGlobal = len(globalRegs)
+
 const (
 	sectionCustom   = 0
 	sectionType     = 1
@@ -567,7 +569,7 @@ func writeMemorySec(ctxt *ld.Link, ldr *loader.Loader) {
 func writeGlobalSec(ctxt *ld.Link) {
 	sizeOffset := writeSecHeader(ctxt, sectionGlobal)
 
-	writeUleb128(ctxt.Out, uint64(len(globalRegs))) // number of globals
+	writeUleb128(ctxt.Out, uint64(len(globalRegs)+1)) // number of globals
 
 	for _, typ := range globalRegs {
 		ctxt.Out.WriteByte(typ)
@@ -580,6 +582,13 @@ func writeGlobalSec(ctxt *ld.Link) {
 		}
 		ctxt.Out.WriteByte(0x0b) // end
 	}
+
+	// Export an immutable ABI descriptor so wasm_exec.js can select the
+	// pointer layout without relying on out-of-band environment variables.
+	ctxt.Out.WriteByte(I32)
+	ctxt.Out.WriteByte(0x00) // immutable
+	writeI32Const(ctxt.Out, int32(ctxt.Arch.PtrSize))
+	ctxt.Out.WriteByte(0x0b) // end
 
 	writeSecSize(ctxt, sizeOffset)
 }
@@ -599,7 +608,7 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int, funcI
 
 	switch buildcfg.GOOS {
 	case "wasip1":
-		writeUleb128(ctxt.Out, uint64(2+len(ldr.WasmExports))) // number of exports
+		writeUleb128(ctxt.Out, uint64(3+len(ldr.WasmExports))) // number of exports
 		var entry, entryExpName string
 		switch ctxt.BuildMode {
 		case ld.BuildModeExe:
@@ -627,7 +636,7 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int, funcI
 		ctxt.Out.WriteByte(0x02)      // mem export
 		writeUleb128(ctxt.Out, 0)     // memidx
 	case "js":
-		writeUleb128(ctxt.Out, uint64(4+len(ldr.WasmExports))) // number of exports
+		writeUleb128(ctxt.Out, uint64(5+len(ldr.WasmExports))) // number of exports
 		for _, name := range []string{"run", "resume", "getsp"} {
 			s := ldr.Lookup("wasm_export_"+name, 0)
 			if s == 0 {
@@ -650,6 +659,10 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int, funcI
 	default:
 		ld.Exitf("internal error: writeExportSec: unrecognized GOOS %s", buildcfg.GOOS)
 	}
+
+	writeName(ctxt.Out, "go:ptrsize")
+	ctxt.Out.WriteByte(0x03)                        // global export
+	writeUleb128(ctxt.Out, uint64(goPtrSizeGlobal)) // globalidx
 
 	writeSecSize(ctxt, sizeOffset)
 }

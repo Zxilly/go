@@ -10,6 +10,7 @@
 // - Add /path/to/go/lib/wasm to your $PATH (so that "go test" can find
 //   "go_js_wasm_exec").
 // - GOOS=js GOARCH=wasm go test
+// - GOOS=js GOARCH=wasm32 go test
 //
 // See -exec in "go help test", and "go help run" for details.
 
@@ -774,5 +775,22 @@ func TestGlobal(t *testing.T) {
 
 	if got := ident.Invoke(js.Global()); !got.Equal(js.Global()) {
 		t.Errorf("got %#v, want %#v", got, js.Global())
+	}
+}
+
+func TestNegativeIndex(t *testing.T) {
+	obj := js.Global().Get("Object").New()
+	obj.Set("-1", "signed")
+	obj.Set("4294967295", "unsigned")
+	if got := obj.Index(-1).String(); got != "signed" {
+		t.Fatalf("Index(-1) = %q, want signed property", got)
+	}
+
+	obj.SetIndex(-2, "set-signed")
+	if got := obj.Get("-2").String(); got != "set-signed" {
+		t.Fatalf("SetIndex(-2) set %q, want signed property", got)
+	}
+	if got := obj.Get("4294967294"); !got.IsUndefined() {
+		t.Fatalf("SetIndex(-2) also set unsigned property to %v", got)
 	}
 }

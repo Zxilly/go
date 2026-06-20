@@ -9,7 +9,7 @@ package syscall
 import "runtime"
 
 // These were originally used by Nacl, then later also used by
-// js/wasm. Now that they're only used by js/wasm, these numbers are
+// js WebAssembly targets. Now that they're only used there, these numbers are
 // just arbitrary.
 //
 // TODO: delete? replace with something meaningful?
