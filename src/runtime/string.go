@@ -185,7 +185,7 @@ func slicebytetostring(buf *tmpBuf, ptr *byte, n int) string {
 func stringDataOnStack(s string) bool {
 	ptr := uintptr(unsafe.Pointer(unsafe.StringData(s)))
 	stk := getg().stack
-	return stk.lo <= ptr && ptr < stk.hi
+	return stk.contains(ptr)
 }
 
 func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte) {

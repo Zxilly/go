@@ -24,6 +24,11 @@ import (
 
 const usesLR = sys.MinFrameSize > 0
 
+// retPCSize is the size of the return-PC slot between stack frames on
+// architectures without a link register: one pointer on x86, but always 8
+// bytes on wasm (the PC slot stays 8 wide even on wasm32, PtrSize=4).
+const retPCSize = goarch.PtrSize + (8-goarch.PtrSize)*goarch.IsWasm32
+
 const (
 	// tracebackInnerFrames is the number of innermost frames to print in a
 	// stack trace. The total maximum frames is tracebackInnerFrames +
@@ -187,7 +192,7 @@ func (u *unwinder) initAt(pc0, sp0, lr0 uintptr, gp *g, flags unwindFlags) {
 			frame.lr = 0
 		} else {
 			frame.pc = *(*uintptr)(unsafe.Pointer(frame.sp))
-			frame.sp += goarch.PtrSize
+			frame.sp += retPCSize
 		}
 	}
 
@@ -334,7 +339,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc))
 		if !usesLR {
 			// On x86, call instruction pushes return PC before entering new function.
-			frame.fp += goarch.PtrSize
+			frame.fp += retPCSize
 		}
 	}
 
@@ -382,7 +387,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			}
 		} else {
 			if frame.lr == 0 {
-				lrPtr = frame.fp - goarch.PtrSize
+				lrPtr = frame.fp - retPCSize
 				frame.lr = *(*uintptr)(unsafe.Pointer(lrPtr))
 			}
 		}
@@ -391,7 +396,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 	frame.varp = frame.fp
 	if !usesLR {
 		// On x86, call instruction pushes return PC before entering new function.
-		frame.varp -= goarch.PtrSize
+		frame.varp -= retPCSize
 	}
 
 	// For architectures with frame pointers, if there's
@@ -1453,35 +1458,49 @@ func tracebacksomeothers(me *g, showf func(*g) bool) {
 func tracebackHexdump(stk stack, frame *stkframe, bad uintptr) {
 	const expand = 32 * goarch.PtrSize
 	const maxExpand = 256 * goarch.PtrSize
-	// Start around frame.sp.
-	lo, hi := frame.sp, frame.sp
-	// Expand to include frame.fp.
-	if frame.fp != 0 && frame.fp < lo {
-		lo = frame.fp
+	// Work in offsets so a zero stk.hi can represent 1<<32 on wasm32.
+	size := stk.hi - stk.lo
+	sp := frame.sp - stk.lo
+	if !stk.containsSP(frame.sp) {
+		if frame.sp < stk.lo {
+			sp = 0
+		} else {
+			sp = size
+		}
 	}
-	if frame.fp != 0 && frame.fp > hi {
-		hi = frame.fp
+	lo, hi := sp, sp
+	if frame.fp != 0 && stk.containsSP(frame.fp) {
+		fp := frame.fp - stk.lo
+		if fp < lo {
+			lo = fp
+		}
+		if fp > hi {
+			hi = fp
+		}
 	}
-	// Expand a bit more.
-	lo, hi = lo-expand, hi+expand
-	// But don't go too far from frame.sp.
-	if lo < frame.sp-maxExpand {
-		lo = frame.sp - maxExpand
+	if lo > expand {
+		lo -= expand
+	} else {
+		lo = 0
 	}
-	if hi > frame.sp+maxExpand {
-		hi = frame.sp + maxExpand
+	if size-hi > expand {
+		hi += expand
+	} else {
+		hi = size
 	}
-	// And don't go outside the stack bounds.
-	if lo < stk.lo {
-		lo = stk.lo
+	if sp-lo > maxExpand {
+		lo = sp - maxExpand
 	}
-	if hi > stk.hi {
-		hi = stk.hi
+	if hi-sp > maxExpand {
+		hi = sp + maxExpand
 	}
+	n := hi - lo
+	lo += stk.lo
+	hi += stk.lo
 
 	// Print the hex dump.
 	print("stack: frame={sp:", hex(frame.sp), ", fp:", hex(frame.fp), "} stack=[", hex(stk.lo), ",", hex(stk.hi), ")\n")
-	hexdumpWords(lo, hi-lo, func(p uintptr, m hexdumpMarker) {
+	hexdumpWords(lo, n, func(p uintptr, m hexdumpMarker) {
 		if p == frame.fp {
 			m.start()
 			println("FP")

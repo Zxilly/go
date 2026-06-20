@@ -200,7 +200,7 @@ type stackScanState struct {
 // Add p as a potential pointer to a stack object.
 // p must be a stack address.
 func (s *stackScanState) putPtr(p uintptr, conservative bool) {
-	if p < s.stack.lo || p >= s.stack.hi {
+	if !s.stack.contains(p) {
 		throw("address not a stack address")
 	}
 	head := &s.buf

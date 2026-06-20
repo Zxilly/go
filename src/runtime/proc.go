@@ -285,7 +285,7 @@ func main() {
 	if isarchive || islibrary {
 		// A program compiled with -buildmode=c-archive or c-shared
 		// has a main, but it is not executed.
-		if GOARCH == "wasm" {
+		if goarch.IsWasmAny != 0 {
 			// On Wasm, pause makes it return to the host.
 			// Unlike cgo callbacks where Ms are created on demand,
 			// on Wasm we have only one M. So we keep this M (and this
@@ -2949,7 +2949,7 @@ func newm1(mp *m) {
 //
 // The calling thread must itself be in a known-good state.
 func startTemplateThread() {
-	if GOARCH == "wasm" { // no threads on wasm yet
+	if goarch.IsWasmAny != 0 { // no threads on wasm yet
 		return
 	}
 
@@ -4554,7 +4554,7 @@ func gdestroy(gp *g) {
 
 	dropg()
 
-	if GOARCH == "wasm" { // no threads yet on wasm
+	if goarch.IsWasmAny != 0 { // no threads yet on wasm
 		gfput(pp, gp)
 		return
 	}
@@ -4695,13 +4695,13 @@ func reentersyscall(pc, sp, bp uintptr) {
 	gp.syscallbp = bp
 
 	// Double-check sp and bp.
-	if gp.syscallsp < gp.stack.lo || gp.stack.hi < gp.syscallsp {
+	if !gp.stack.containsSP(gp.syscallsp) {
 		systemstack(func() {
 			print("entersyscall inconsistent sp ", hex(gp.syscallsp), " [", hex(gp.stack.lo), ",", hex(gp.stack.hi), "]\n")
 			throw("entersyscall")
 		})
 	}
-	if gp.syscallbp != 0 && gp.syscallbp < gp.stack.lo || gp.stack.hi < gp.syscallbp {
+	if gp.syscallbp != 0 && !gp.stack.containsSP(gp.syscallbp) {
 		systemstack(func() {
 			print("entersyscall inconsistent bp ", hex(gp.syscallbp), " [", hex(gp.stack.lo), ",", hex(gp.stack.hi), "]\n")
 			throw("entersyscall")
@@ -4847,7 +4847,7 @@ func entersyscallblock() {
 	gp.syscallsp = gp.sched.sp
 	gp.syscallpc = gp.sched.pc
 	gp.syscallbp = gp.sched.bp
-	if gp.syscallsp < gp.stack.lo || gp.stack.hi < gp.syscallsp {
+	if !gp.stack.containsSP(gp.syscallsp) {
 		sp1 := sp
 		sp2 := gp.sched.sp
 		sp3 := gp.syscallsp
@@ -4876,13 +4876,13 @@ func entersyscallblock() {
 		usleep(10)
 	}
 	casgstatus(gp, _Grunning, _Gsyscall)
-	if gp.syscallsp < gp.stack.lo || gp.stack.hi < gp.syscallsp {
+	if !gp.stack.containsSP(gp.syscallsp) {
 		systemstack(func() {
 			print("entersyscallblock inconsistent sp ", hex(sp), " ", hex(gp.sched.sp), " ", hex(gp.syscallsp), " [", hex(gp.stack.lo), ",", hex(gp.stack.hi), "]\n")
 			throw("entersyscallblock")
 		})
 	}
-	if gp.syscallbp != 0 && gp.syscallbp < gp.stack.lo || gp.stack.hi < gp.syscallbp {
+	if gp.syscallbp != 0 && !gp.stack.containsSP(gp.syscallbp) {
 		systemstack(func() {
 			print("entersyscallblock inconsistent bp ", hex(bp), " ", hex(gp.sched.bp), " ", hex(gp.syscallbp), " [", hex(gp.stack.lo), ",", hex(gp.stack.hi), "]\n")
 			throw("entersyscallblock")
@@ -5363,7 +5363,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
-	if newg.stack.hi == 0 {
+	if newg.stack.lo == 0 {
 		throw("newproc1: newg missing stack")
 	}
 
@@ -5648,7 +5648,7 @@ func Breakpoint() {
 //
 //go:nosplit
 func dolockOSThread() {
-	if GOARCH == "wasm" {
+	if goarch.IsWasmAny != 0 {
 		return // no threads on wasm yet
 	}
 	gp := getg()
@@ -5700,7 +5700,7 @@ func lockOSThread() {
 //
 //go:nosplit
 func dounlockOSThread() {
-	if GOARCH == "wasm" {
+	if goarch.IsWasmAny != 0 {
 		return // no threads on wasm yet
 	}
 	gp := getg()
@@ -6424,7 +6424,7 @@ func checkdead() {
 	// assumed to be running.
 	// One exception is Wasm, which is single-threaded. If we are
 	// in Go and all goroutines are blocked, it deadlocks.
-	if (islibrary || isarchive) && GOARCH != "wasm" {
+	if (islibrary || isarchive) && GOARCH != "wasm" && GOARCH != "wasm32" {
 		return
 	}
 
@@ -6530,7 +6530,7 @@ var forcegcperiod int64 = 2 * 60 * 1e9
 // haveSysmon indicates whether there is sysmon thread support.
 //
 // No threads on wasm yet, so no sysmon.
-const haveSysmon = GOARCH != "wasm"
+const haveSysmon = GOARCH != "wasm" && GOARCH != "wasm32"
 
 // Always runs without a P, so write barriers are not allowed.
 //

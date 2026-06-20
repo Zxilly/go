@@ -250,7 +250,7 @@ func callbackUpdateSystemStack(mp *m, sp uintptr, signal bool) {
 		return
 	}
 
-	inBound := sp > g0.stack.lo && sp <= g0.stack.hi
+	inBound := sp != g0.stack.lo && g0.stack.containsSP(sp)
 	if inBound && mp.g0StackAccurate {
 		// This M has called into Go before and has the stack bounds
 		// initialized. We have the accurate stack bounds, and the SP
@@ -818,7 +818,7 @@ func cgoIsGoPointer(p unsafe.Pointer) bool {
 //go:nosplit
 //go:nowritebarrierrec
 func cgoInRange(p unsafe.Pointer, start, end uintptr) bool {
-	return start <= uintptr(p) && uintptr(p) < end
+	return rangeContains(start, end, uintptr(p))
 }
 
 // cgoCheckResult is called to check the result parameter of an

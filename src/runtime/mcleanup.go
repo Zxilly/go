@@ -139,7 +139,7 @@ func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
 	// Check that arg is not within ptr.
 	if kind == abi.Pointer || kind == abi.UnsafePointer {
 		argPtr := uintptr(*(*unsafe.Pointer)(unsafe.Pointer(&arg)))
-		if argPtr >= base && argPtr < base+span.elemsize {
+		if rangeContains(base, base+span.elemsize, argPtr) {
 			// It's possible that both pointers are separate
 			// parts of a tiny allocation, which is OK.
 			// We side-stepped the tiny allocator above for
@@ -163,7 +163,7 @@ func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
 				break
 			}
 			ptr := *(*uintptr)(unsafe.Pointer(addr))
-			if ptr >= base && ptr < base+span.elemsize {
+			if rangeContains(base, base+span.elemsize, ptr) {
 				panic("runtime.AddCleanup: cleanup function closes over ptr, cleanup will never run")
 			}
 		}

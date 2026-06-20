@@ -927,6 +927,22 @@ func (a AddrRange) Size() uintptr {
 	return a.addrRange.size()
 }
 
+func (a AddrRange) Contains(addr uintptr) bool {
+	return a.addrRange.contains(addr)
+}
+
+func (a *AddrRange) TakeFromFront(length uintptr, align uint8) (uintptr, bool) {
+	return a.addrRange.takeFromFront(length, align)
+}
+
+func (a *AddrRange) TakeFromBack(length uintptr, align uint8) (uintptr, bool) {
+	return a.addrRange.takeFromBack(length, align)
+}
+
+func (a AddrRange) RemoveGreaterEqual(addr uintptr) AddrRange {
+	return AddrRange{a.addrRange.removeGreaterEqual(addr)}
+}
+
 // testSysStat is the sysStat passed to test versions of various
 // runtime structures. We do actually have to keep track of this
 // because otherwise memstats.mappedReady won't actually line up

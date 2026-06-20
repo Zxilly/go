@@ -256,7 +256,7 @@ const (
 	// logHeapArenaBytes is log_2 of heapArenaBytes. For clarity,
 	// prefer using heapArenaBytes where possible (we need the
 	// constant to compute some other constants).
-	logHeapArenaBytes = (6+20)*(_64bit*(1-goos.IsWindows)*(1-goarch.IsWasm)*(1-goos.IsIos*goarch.IsArm64)) + (2+20)*(_64bit*goos.IsWindows) + (2+20)*(1-_64bit) + (9+10)*goarch.IsWasm + (2+20)*goos.IsIos*goarch.IsArm64
+	logHeapArenaBytes = (6+20)*(_64bit*(1-goos.IsWindows)*(1-goarch.IsWasm)*(1-goos.IsIos*goarch.IsArm64)) + (2+20)*(_64bit*goos.IsWindows) + (2+20)*((1-_64bit)*(1-goarch.IsWasm32)) + (9+10)*goarch.IsWasmAny + (2+20)*goos.IsIos*goarch.IsArm64
 
 	// heapArenaBitmapWords is the size of each heap arena's bitmap in uintptrs.
 	heapArenaBitmapWords = heapArenaWords / (8 * goarch.PtrSize)
@@ -824,11 +824,12 @@ func (h *mheap) sysAlloc(n uintptr, hintList **arenaHint, arenaList *[]arenaIdx)
 	{
 		var bad string
 		p := uintptr(v)
-		if p+size < p {
+		end, ok := sysAllocRangeEnd(p, size)
+		if !ok {
 			bad = "region exceeds uintptr range"
 		} else if arenaIndex(p) >= 1<<arenaBits {
 			bad = "base outside usable address space"
-		} else if arenaIndex(p+size-1) >= 1<<arenaBits {
+		} else if arenaIndex(end-1) >= 1<<arenaBits {
 			bad = "end outside usable address space"
 		}
 		if bad != "" {
@@ -919,6 +920,13 @@ mapped:
 	}
 
 	return
+}
+
+// sysAllocRangeEnd returns the exclusive end of a system allocation.
+// On wasm32, zero can represent the end of the 32-bit address space.
+func sysAllocRangeEnd(base, size uintptr) (uintptr, bool) {
+	end := base + size
+	return end, end >= base || goarch.IsWasm32 != 0 && end == 0
 }
 
 // enableMetadataHugePages enables huge pages for various sources of heap metadata.
@@ -1931,7 +1939,7 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	}
 	mp.mallocing = 1
 
-	if mp.curg.stack.lo <= uintptr(ptr) && uintptr(ptr) < mp.curg.stack.hi {
+	if mp.curg.stack.contains(uintptr(ptr)) {
 		// This points into our stack, so free is a no-op.
 		mp.mallocing = 0
 		releasem(mp)
@@ -1996,7 +2004,7 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	s := c.alloc[spc]
 
 	if debugReusableLog {
-		if s.base() <= uintptr(v) && uintptr(v) < s.limit {
+		if s.contains(uintptr(v)) {
 			println("freegc [in mcache]:", hex(uintptr(v)), "sweepgen:", mheap_.sweepgen, "writeBarrier.enabled:", writeBarrier.enabled)
 		} else {
 			println("freegc [NOT in mcache]:", hex(uintptr(v)), "sweepgen:", mheap_.sweepgen, "writeBarrier.enabled:", writeBarrier.enabled)
@@ -2046,7 +2054,7 @@ func (c *mcache) nextReusableNoScan(s *mspan, spc spanClass) (gclinkptr, *mspan)
 	if !writeBarrier.enabled {
 		return v, nil
 	}
-	if s.base() <= uintptr(v) && uintptr(v) < s.limit {
+	if s.contains(uintptr(v)) {
 		// Return the original span.
 		return v, s
 	}
@@ -2073,7 +2081,7 @@ func doubleCheckNextReusable(v gclinkptr) {
 	if state := span.state.get(); state != mSpanInUse {
 		throw("nextReusable: span is not in use")
 	}
-	if uintptr(v) < span.base() || uintptr(v) >= span.limit {
+	if !span.contains(uintptr(v)) {
 		throw("nextReusable: span is not in range")
 	}
 	if span.objBase(uintptr(v)) != uintptr(v) {
@@ -2391,7 +2399,7 @@ func persistentalloc1(size, align uintptr, sysStat *sysMemStat) *notInHeap {
 func inPersistentAlloc(p uintptr) bool {
 	chunk := atomic.Loaduintptr((*uintptr)(unsafe.Pointer(&persistentChunks)))
 	for chunk != 0 {
-		if p >= chunk && p < chunk+persistentChunkSize {
+		if rangeContains(chunk, chunk+persistentChunkSize, p) {
 			return true
 		}
 		chunk = *(*uintptr)(unsafe.Pointer(chunk))
@@ -2413,28 +2421,36 @@ type linearAlloc struct {
 }
 
 func (l *linearAlloc) init(base, size uintptr, mapMemory bool) {
-	if base+size < base {
+	end, ok := sysAllocRangeEnd(base, size)
+	if !ok {
 		// Chop off the last byte. The runtime isn't prepared
 		// to deal with situations where the bounds could overflow.
 		// Leave that memory reserved, though, so we don't map it
 		// later.
-		size -= 1
+		size = ^uintptr(0) - base
+		end = base + size
 	}
 	l.next, l.mapped = base, base
-	l.end = base + size
+	l.end = end
 	l.mapMemory = mapMemory
 }
 
 func (l *linearAlloc) alloc(size, align uintptr, sysStat *sysMemStat, vmaName string) unsafe.Pointer {
+	if l.next == l.end {
+		return nil
+	}
 	p := alignUp(l.next, align)
-	if p+size > l.end {
+	if p < l.next || size > makeAddrRange(p, l.end).size() {
 		return nil
 	}
 	l.next = p + size
-	if pEnd := alignUp(l.next-1, physPageSize); pEnd > l.mapped {
+	if pEnd := alignUp(l.next-1, physPageSize); pEnd != l.mapped {
+		n := makeAddrRange(l.mapped, pEnd).size()
+		if n == 0 {
+			throw("linearAlloc: mapped range overflow")
+		}
 		if l.mapMemory {
 			// Transition from Reserved to Prepared to Ready.
-			n := pEnd - l.mapped
 			sysMap(unsafe.Pointer(l.mapped), n, sysStat, vmaName)
 			sysUsed(unsafe.Pointer(l.mapped), n, n)
 		}

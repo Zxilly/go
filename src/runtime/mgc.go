@@ -2330,7 +2330,7 @@ func gcTestIsReachable(ptrs ...unsafe.Pointer) (mask uint64) {
 func gcTestPointerClass(p unsafe.Pointer) string {
 	p2 := uintptr(noescape(p))
 	gp := getg()
-	if gp.stack.lo <= p2 && p2 < gp.stack.hi {
+	if gp.stack.contains(p2) {
 		return "stack"
 	}
 	if base, _, _ := findObject(p2, 0, 0); base != 0 {
