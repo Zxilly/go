@@ -1418,6 +1418,13 @@ const (
 	dataAlignmentFactor = -4
 )
 
+func returnPCSize(arch *sys.Arch) int64 {
+	if !arch.HasLR {
+		return int64(arch.RegSize)
+	}
+	return int64(arch.PtrSize)
+}
+
 // appendPCDeltaCFA appends per-PC CFA deltas to b and returns the final slice.
 func appendPCDeltaCFA(arch *sys.Arch, b []byte, deltapc, cfa int64) []byte {
 	b = append(b, dwarf.DW_CFA_def_cfa_offset_sf)
@@ -1445,6 +1452,7 @@ func (d *dwctxt) writeframes(fs loader.Sym) dwarfSecInfo {
 	fsu.SetType(sym.SDWARFSECT)
 	isdw64 := isDwarf64(d.linkctxt)
 	haslr := d.linkctxt.Arch.HasLR
+	retPCSize := returnPCSize(d.arch)
 
 	// Length field is 4 bytes on Dwarf32 and 12 bytes on Dwarf64
 	lengthFieldSize := int64(4)
@@ -1480,11 +1488,11 @@ func (d *dwctxt) writeframes(fs loader.Sym) dwarfSecInfo {
 		dwarf.Uleb128put(d, fsd, int64(thearch.Dwarfregsp)) // ...of the platform's SP register...
 		dwarf.Uleb128put(d, fsd, int64(0))                  // ...is CFA+0.
 	} else {
-		dwarf.Uleb128put(d, fsd, int64(d.arch.PtrSize)) // ...plus the word size (because the call instruction implicitly adds one word to the frame).
+		dwarf.Uleb128put(d, fsd, retPCSize) // ...plus the return PC slot size.
 
-		fsu.AddUint8(dwarf.DW_CFA_offset_extended)                           // The previous value...
-		dwarf.Uleb128put(d, fsd, int64(thearch.Dwarfreglr))                  // ...of the return address...
-		dwarf.Uleb128put(d, fsd, int64(-d.arch.PtrSize)/dataAlignmentFactor) // ...is saved at [CFA - (PtrSize/4)].
+		fsu.AddUint8(dwarf.DW_CFA_offset_extended)               // The previous value...
+		dwarf.Uleb128put(d, fsd, int64(thearch.Dwarfreglr))      // ...of the return address...
+		dwarf.Uleb128put(d, fsd, -retPCSize/dataAlignmentFactor) // ...is saved below the CFA.
 	}
 
 	pad := int64(cieReserve) + lengthFieldSize - int64(len(d.ldr.Data(fs)))
@@ -1534,7 +1542,7 @@ func (d *dwctxt) writeframes(fs loader.Sym) dwarfSecInfo {
 			spdelta := int64(pcsp.Value)
 			if !haslr {
 				// Return address has been pushed onto stack.
-				spdelta += int64(d.arch.PtrSize)
+				spdelta += retPCSize
 			}
 
 			if haslr && !fi.TopFrame() {

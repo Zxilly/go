@@ -5,6 +5,7 @@
 package ld
 
 import (
+	"cmd/internal/sys"
 	"debug/dwarf"
 	"debug/pe"
 	"fmt"
@@ -24,6 +25,23 @@ import (
 	objfilepkg "cmd/internal/objfile" // renamed to avoid conflict with objfile function
 	"cmd/link/internal/dwtest"
 )
+
+func TestReturnPCSize(t *testing.T) {
+	tests := []struct {
+		name string
+		arch *sys.Arch
+		want int64
+	}{
+		{name: "386", arch: sys.Arch386, want: 4},
+		{name: "wasm", arch: sys.ArchWasm, want: 8},
+		{name: "wasm32", arch: sys.ArchWasm32, want: 8},
+	}
+	for _, tt := range tests {
+		if got := returnPCSize(tt.arch); got != tt.want {
+			t.Errorf("%s: returnPCSize() = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
 
 func mustHaveDWARF(t testing.TB) {
 	if !platform.ExecutableHasDWARF(runtime.GOOS, runtime.GOARCH) {
