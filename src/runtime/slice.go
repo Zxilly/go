@@ -303,7 +303,7 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 func growsliceNoAlias(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice {
 	s := growslice(oldPtr, newLen, oldCap, num, et)
 	if goexperiment.RuntimeFreegc && oldPtr != nil && oldPtr != s.array {
-		if gp := getg(); uintptr(oldPtr) < gp.stack.lo || gp.stack.hi <= uintptr(oldPtr) {
+		if gp := getg(); !gp.stack.contains(uintptr(oldPtr)) {
 			// oldPtr does not point into the current stack, and it is not
 			// the data pointer for s after the grow, so attempt to free it.
 			// (Note that freegc also verifies that oldPtr does not point into our stack,

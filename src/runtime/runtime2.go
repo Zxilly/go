@@ -462,6 +462,24 @@ type stack struct {
 	hi uintptr
 }
 
+// rangeContains reports whether addr is in the valid range [base, limit).
+// Subtraction makes this work when a zero limit represents one past the end
+// of the address space.
+func rangeContains(base, limit, addr uintptr) bool {
+	return addr-base < limit-base
+}
+
+// contains reports whether addr is in s.
+func (s stack) contains(addr uintptr) bool {
+	return rangeContains(s.lo, s.hi, addr)
+}
+
+// containsSP is like contains, but also accepts the exclusive high bound,
+// which is a valid stack pointer for an empty stack.
+func (s stack) containsSP(sp uintptr) bool {
+	return s.lo != s.hi && sp-s.lo <= s.hi-s.lo
+}
+
 // heldLockInfo gives info on a held lock and the rank of that lock
 type heldLockInfo struct {
 	lockAddr uintptr
@@ -737,7 +755,7 @@ type mPadded struct {
 	// not in the next-smallest (1792-byte) size class. That leaves the 11 low
 	// bits of muintptr values available for flags, as required by
 	// lock_spinbit.go.
-	_ [(1 - goarch.IsWasm) * (2048 - mallocHeaderSize - mRedZoneSize - unsafe.Sizeof(m{}))]byte
+	_ [(1 - goarch.IsWasmAny) * (2048 - mallocHeaderSize - mRedZoneSize - unsafe.Sizeof(m{}))]byte
 }
 
 // mWeakPointer is a "weak" pointer to an M. A weak pointer for each M is

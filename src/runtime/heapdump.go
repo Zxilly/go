@@ -522,7 +522,8 @@ func dumpparams() {
 		dumpbool(true) // big-endian ptrs
 	}
 	dumpint(goarch.PtrSize)
-	var arenaStart, arenaEnd uintptr
+	var arenaStart uintptr
+	var arenaEnd uint64
 	for i1 := range mheap_.arenas {
 		if mheap_.arenas[i1] == nil {
 			continue
@@ -535,13 +536,13 @@ func dumpparams() {
 			if arenaStart == 0 || base < arenaStart {
 				arenaStart = base
 			}
-			if base+heapArenaBytes > arenaEnd {
-				arenaEnd = base + heapArenaBytes
+			if end := uint64(base) + uint64(heapArenaBytes); end > arenaEnd {
+				arenaEnd = end
 			}
 		}
 	}
 	dumpint(uint64(arenaStart))
-	dumpint(uint64(arenaEnd))
+	dumpint(arenaEnd)
 	dumpstr(goarch.GOARCH)
 	dumpstr(buildVersion)
 	dumpint(uint64(numCPUStartup))

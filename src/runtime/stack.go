@@ -623,7 +623,7 @@ func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
 		// See go.dev/issues/73801.
 		valgrindMakeMemDefined(unsafe.Pointer(&p), unsafe.Sizeof(&p))
 	}
-	if adjinfo.old.lo <= p && p < adjinfo.old.hi {
+	if adjinfo.old.contains(p) {
 		*pp = p + adjinfo.delta
 		if stackDebug >= 3 {
 			print("        adjust ptr ", pp, ":", hex(p), " -> ", hex(*pp), "\n")
@@ -650,8 +650,6 @@ func (bv *bitvector) ptrbit(i uintptr) uint8 {
 // bv describes the memory starting at address scanp.
 // Adjust any pointers contained therein.
 func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f funcInfo) {
-	minp := adjinfo.old.lo
-	maxp := adjinfo.old.hi
 	delta := adjinfo.delta
 	num := uintptr(bv.n)
 	// If this frame might contain channel receive slots, use CAS
@@ -680,7 +678,7 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				print("runtime: bad pointer in frame ", funcname(f), " at ", pp, ": ", hex(p), "\n")
 				throw("invalid pointer found on stack")
 			}
-			if minp <= p && p < maxp {
+			if adjinfo.old.contains(p) {
 				if stackDebug >= 3 {
 					print("adjust ptr ", hex(p), " ", funcname(f), "\n")
 				}
@@ -708,7 +706,7 @@ func adjustframe(frame *stkframe, adjinfo *adjustinfo) {
 			// Frame pointers should always point to the next higher frame on
 			// the Go stack (or be nil, for the top frame on the stack).
 			bp := *(*uintptr)(unsafe.Pointer(frame.varp))
-			if bp != 0 && (bp < adjinfo.old.lo || bp >= adjinfo.old.hi) {
+			if bp != 0 && !adjinfo.old.contains(bp) {
 				println("runtime: found invalid frame pointer")
 				print("bp=", hex(bp), " min=", hex(adjinfo.old.lo), " max=", hex(adjinfo.old.hi), "\n")
 				throw("bad frame pointer")
@@ -809,7 +807,7 @@ func adjustctxt(gp *g, adjinfo *adjustinfo) {
 	}
 	if debugCheckBP {
 		bp := gp.sched.bp
-		if bp != 0 && (bp < adjinfo.old.lo || bp >= adjinfo.old.hi) {
+		if bp != 0 && !adjinfo.old.contains(bp) {
 			println("runtime: found invalid top frame pointer")
 			print("bp=", hex(bp), " min=", hex(adjinfo.old.lo), " max=", hex(adjinfo.old.hi), "\n")
 			throw("bad top frame pointer")
@@ -856,7 +854,7 @@ func adjustsudogs(gp *g, adjinfo *adjustinfo) {
 }
 
 func fillstack(stk stack, b byte) {
-	for p := stk.lo; p < stk.hi; p++ {
+	for p := stk.lo; p != stk.hi; p++ {
 		*(*byte)(unsafe.Pointer(p)) = b
 	}
 }
@@ -865,7 +863,7 @@ func findsghi(gp *g, stk stack) uintptr {
 	var sghi uintptr
 	for sg := gp.waiting; sg != nil; sg = sg.waitlink {
 		p := sg.elem.uintptr() + uintptr(sg.c.get().elemsize)
-		if stk.lo <= p && p < stk.hi && p > sghi {
+		if stk.contains(p) && p > sghi {
 			sghi = p
 		}
 	}
@@ -1134,8 +1132,8 @@ func newstack() {
 	}
 	sp := gp.sched.sp
 	if goarch.ArchFamily == goarch.AMD64 || goarch.ArchFamily == goarch.I386 || goarch.ArchFamily == goarch.WASM {
-		// The call to morestack cost a word.
-		sp -= goarch.PtrSize
+		// The call to morestack cost one return-PC slot.
+		sp -= retPCSize
 	}
 	if stackDebug >= 1 || sp < gp.stack.lo {
 		print("runtime: newstack sp=", hex(sp), " stack=[", hex(gp.stack.lo), ", ", hex(gp.stack.hi), "]\n",

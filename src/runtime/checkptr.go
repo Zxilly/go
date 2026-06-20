@@ -88,7 +88,7 @@ func checkptrArithmetic(p unsafe.Pointer, originals []unsafe.Pointer) {
 //go:linkname checkptrBase
 func checkptrBase(p unsafe.Pointer) uintptr {
 	// stack
-	if gp := getg(); gp.stack.lo <= uintptr(p) && uintptr(p) < gp.stack.hi {
+	if gp := getg(); gp.stack.contains(uintptr(p)) {
 		// TODO(mdempsky): Walk the stack to identify the
 		// specific stack frame or even stack object that p
 		// points into.

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && (wasm || wasm32)
 
 package runtime
 
@@ -11,7 +11,7 @@ import (
 	_ "unsafe" // for go:linkname
 )
 
-// js/wasm has no support for threads yet. There is no preemption.
+// js WebAssembly targets have no support for threads yet. There is no preemption.
 
 const (
 	mutex_unlocked = 0
@@ -42,7 +42,7 @@ func lock(l *mutex) {
 
 func lock2(l *mutex) {
 	if l.key == mutex_locked {
-		// js/wasm is single-threaded so we should never
+		// js WebAssembly targets are single-threaded so we should never
 		// observe this.
 		throw("self deadlock")
 	}

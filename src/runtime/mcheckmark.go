@@ -204,7 +204,7 @@ func checkFinalizersAndCleanups() {
 		if atomic.Load8(bytep)&mask != 0 {
 			issues |= reportCycle
 		}
-		if p >= lastTinyBlock && p < lastTinyBlock+maxTinySize {
+		if rangeContains(lastTinyBlock, lastTinyBlock+maxTinySize, p) {
 			issues |= reportTiny
 		}
 		if issues != 0 {

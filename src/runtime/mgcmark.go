@@ -1509,7 +1509,7 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 				// Same work as in scanObject; see comments there.
 				p := *(*uintptr)(unsafe.Pointer(b + i))
 				if p != 0 {
-					if stk != nil && p >= stk.stack.lo && p < stk.stack.hi {
+					if stk != nil && stk.stack.contains(p) {
 						stk.putPtr(p, false)
 					} else {
 						if !tryDeferToSpanScan(p, gcw) {
@@ -1548,7 +1548,7 @@ func scanConservative(b, n uintptr, ptrmask *uint8, gcw *gcWork, state *stackSca
 			}
 
 			val := *(*uintptr)(unsafe.Pointer(p))
-			if state != nil && state.stack.lo <= val && val < state.stack.hi {
+			if state != nil && state.stack.contains(val) {
 				m.start()
 				println("ptr to stack")
 				return
@@ -1593,7 +1593,7 @@ func scanConservative(b, n uintptr, ptrmask *uint8, gcw *gcWork, state *stackSca
 		val := *(*uintptr)(unsafe.Pointer(b + i))
 
 		// Check if val points into the stack.
-		if state != nil && state.stack.lo <= val && val < state.stack.hi {
+		if state != nil && state.stack.contains(val) {
 			// val may point to a stack object. This
 			// object may be dead from last cycle and
 			// hence may contain pointers to unallocated

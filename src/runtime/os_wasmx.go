@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build wasm || wasm32
+
 package runtime
 
 import (
@@ -13,7 +15,11 @@ func osinit() {
 	// https://webassembly.github.io/spec/core/exec/runtime.html#memory-instances
 	physPageSize = 64 * 1024
 	initBloc()
-	blocMax = uintptr(currentMemory()) * physPageSize // record the initial linear memory size
+	pages := currentMemory()
+	if pages < 0 {
+		throw("negative WebAssembly memory size")
+	}
+	blocMax = uint64(pages) * uint64(physPageSize) // record the initial linear memory size
 	numCPUStartup = getCPUCount()
 	getg().m.procid = 2
 }

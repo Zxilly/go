@@ -61,7 +61,7 @@ const (
 	// size (see heapArenaBytes).
 	pallocChunkPages    = 1 << logPallocChunkPages
 	pallocChunkBytes    = pallocChunkPages * pageSize
-	logPallocChunkPages = 9*(1-goarch.IsWasm) + 6*goarch.IsWasm
+	logPallocChunkPages = 9*(1-goarch.IsWasmAny) + 6*goarch.IsWasmAny
 	logPallocChunkBytes = logPallocChunkPages + gc.PageShift
 
 	// The number of radix bits for each level.
@@ -223,7 +223,7 @@ type pageAlloc struct {
 	// heapAddrBits | L1 Bits | L2 Bits | L2 Entry Size
 	// ------------------------------------------------
 	// 32           | 0       | 10      | 128 KiB
-	// 32 (wasm)    | 0       | 13      | 128 KiB
+	// 32 (wasm)    | 0       | 13      | 128 KiB (wasm and wasm32)
 	// 33 (iOS)     | 0       | 11      | 256 KiB
 	// 48           | 13      | 13      | 1 MiB
 	//
@@ -380,7 +380,7 @@ func (p *pageAlloc) grow(base, size uintptr) {
 	// If no growth happened yet, start == 0. This is generally
 	// safe since the zero page is unmapped.
 	firstGrowth := p.start == 0
-	start, end := chunkIndex(base), chunkIndex(limit)
+	start, end := chunkIndex(base), chunkIndex(limit-1)+1
 	if firstGrowth || start < p.start {
 		p.start = start
 	}
@@ -404,7 +404,7 @@ func (p *pageAlloc) grow(base, size uintptr) {
 	//
 	// Newly-grown memory is always considered scavenged.
 	// Set all the bits in the scavenged bitmaps high.
-	for c := chunkIndex(base); c < chunkIndex(limit); c++ {
+	for c := chunkIndex(base); c < end; c++ {
 		if p.chunks[c.l1()] == nil {
 			// Create the necessary l2 entry.
 			const l2Size = unsafe.Sizeof(*p.chunks[0])

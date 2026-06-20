@@ -21,10 +21,18 @@ import (
 type addrRange struct {
 	// base and limit together represent the region of address space
 	// [base, limit). That is, base is inclusive, limit is exclusive.
+	// When the address space is as wide as uintptr, a zero limit with
+	// a non-zero base represents the exclusive end of the address space.
 	// These are address over an offset view of the address space on
 	// platforms with a segmented address space, that is, on platforms
 	// where arenaBaseOffset != 0.
 	base, limit offAddr
+}
+
+// limitIsMaxPlusOne reports whether limit represents one past the
+// highest address representable by uintptr.
+func (a addrRange) limitIsMaxPlusOne() bool {
+	return heapAddrBits == 8*goarch.PtrSize && a.base.addr() != 0 && a.limit.addr() == 0
 }
 
 // makeAddrRange creates a new address range from two virtual addresses.
@@ -40,6 +48,9 @@ func makeAddrRange(base, limit uintptr) addrRange {
 
 // size returns the size of the range represented in bytes.
 func (a addrRange) size() uintptr {
+	if a.limitIsMaxPlusOne() {
+		return -a.base.addr()
+	}
 	if !a.base.lessThan(a.limit) {
 		return 0
 	}
@@ -50,7 +61,7 @@ func (a addrRange) size() uintptr {
 
 // contains returns whether or not the range contains a given address.
 func (a addrRange) contains(addr uintptr) bool {
-	return a.base.lessEqual(offAddr{addr}) && (offAddr{addr}).lessThan(a.limit)
+	return a.base.lessEqual(offAddr{addr}) && (a.limitIsMaxPlusOne() || (offAddr{addr}).lessThan(a.limit))
 }
 
 // subtract takes the addrRange toPrune and cuts out any overlap with
@@ -74,12 +85,17 @@ func (a addrRange) subtract(b addrRange) addrRange {
 // the base to align first. On success, returns the aligned start of the region
 // taken and true.
 func (a *addrRange) takeFromFront(len uintptr, align uint8) (uintptr, bool) {
-	base := alignUp(a.base.addr(), uintptr(align)) + len
-	if base > a.limit.addr() {
+	base := alignUp(a.base.addr(), uintptr(align))
+	if base < a.base.addr() {
 		return 0, false
 	}
-	a.base = offAddr{base}
-	return base - len, true
+	padding := base - a.base.addr()
+	size := a.size()
+	if padding > size || len > size-padding {
+		return 0, false
+	}
+	a.base = offAddr{base + len}
+	return base, true
 }
 
 // takeFromBack takes len bytes from the end of the address range, aligning
@@ -100,10 +116,10 @@ func (a addrRange) removeGreaterEqual(addr uintptr) addrRange {
 	if (offAddr{addr}).lessEqual(a.base) {
 		return addrRange{}
 	}
-	if a.limit.lessEqual(offAddr{addr}) {
-		return a
+	if a.contains(addr) {
+		return makeAddrRange(a.base.addr(), addr)
 	}
-	return makeAddrRange(a.base.addr(), addr)
+	return a
 }
 
 var (

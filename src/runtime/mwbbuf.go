@@ -129,7 +129,7 @@ func (b *wbBuf) empty() bool {
 //go:nowritebarrierrec
 //go:nosplit
 func (b *wbBuf) get1() *[1]uintptr {
-	if b.next+goarch.PtrSize > b.end {
+	if b.end-b.next < goarch.PtrSize {
 		wbBufFlush()
 	}
 	p := (*[1]uintptr)(unsafe.Pointer(b.next))
@@ -140,7 +140,7 @@ func (b *wbBuf) get1() *[1]uintptr {
 //go:nowritebarrierrec
 //go:nosplit
 func (b *wbBuf) get2() *[2]uintptr {
-	if b.next+2*goarch.PtrSize > b.end {
+	if b.end-b.next < 2*goarch.PtrSize {
 		wbBufFlush()
 	}
 	p := (*[2]uintptr)(unsafe.Pointer(b.next))

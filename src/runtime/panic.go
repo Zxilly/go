@@ -54,7 +54,7 @@ const (
 // pc should be the program counter of the compiler-generated code that
 // triggered this panic.
 func panicCheck1(pc uintptr, msg string) {
-	if goarch.IsWasm == 0 && stringslite.HasPrefix(funcname(findfunc(pc)), "runtime.") {
+	if goarch.IsWasmAny == 0 && stringslite.HasPrefix(funcname(findfunc(pc)), "runtime.") {
 		// Note: wasm can't tail call, so we can't get the original caller's pc.
 		throw(msg)
 	}
@@ -1399,7 +1399,7 @@ func recovery(gp *g) {
 	// binaries. (Admittedly, both of these are modest savings.)
 
 	// Ensure we're recovering within the appropriate stack.
-	if sp != 0 && (sp < gp.stack.lo || gp.stack.hi < sp) {
+	if sp != 0 && !gp.stack.containsSP(sp) {
 		print("recover: ", hex(sp), " not in [", hex(gp.stack.lo), ", ", hex(gp.stack.hi), "]\n")
 		throw("bad recovery")
 	}

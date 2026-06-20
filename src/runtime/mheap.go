@@ -198,7 +198,8 @@ type mheap struct {
 	markArenas []arenaIdx
 
 	// curArena is the arena that the heap is currently growing
-	// into. This should always be physPageSize-aligned.
+	// into. This should always be physPageSize-aligned. On wasm32,
+	// end == 0 may represent the exclusive end of the address space.
 	curArena struct {
 		base, end uintptr
 	}
@@ -508,7 +509,7 @@ type mspan struct {
 	isUserArenaChunk      bool          // whether or not this span represents a user arena
 	allocCountBeforeCache uint16        // a copy of allocCount that is stored just before this span is cached
 	elemsize              uintptr       // computed from sizeclass or from npages
-	limit                 uintptr       // end of data in span
+	limit                 uintptr       // end of data in span; 0 may mean 1<<32 on wasm32
 	speciallock           mutex         // guards specials list and changes to pinnerBits
 	specials              *special      // linked list of special records sorted by offset.
 	userArenaChunkFree    addrRange     // interval for managing chunk allocation
@@ -517,6 +518,13 @@ type mspan struct {
 
 func (s *mspan) base() uintptr {
 	return s.startAddr
+}
+
+// contains reports whether addr is in the object-containing part of s.
+//
+//go:nosplit
+func (s *mspan) contains(addr uintptr) bool {
+	return rangeContains(s.base(), s.limit, addr)
 }
 
 // recordspan adds a newly allocated span to h.allspans.
@@ -662,12 +670,12 @@ func inheap(b uintptr) bool {
 //go:nosplit
 func inHeapOrStack(b uintptr) bool {
 	s := spanOf(b)
-	if s == nil || b < s.base() {
+	if s == nil {
 		return false
 	}
 	switch s.state.get() {
 	case mSpanInUse, mSpanManual:
-		return b < s.limit
+		return s.contains(b)
 	default:
 		return false
 	}
@@ -737,7 +745,7 @@ func spanOfHeap(p uintptr) *mspan {
 	// have to synchronize with span initialization. Then, it's
 	// still possible we picked up a stale span pointer, so we
 	// have to check the span's bounds.
-	if s == nil || s.state.get() != mSpanInUse || p < s.base() || p >= s.limit {
+	if s == nil || s.state.get() != mSpanInUse || !s.contains(p) {
 		return nil
 	}
 	return s
@@ -1544,7 +1552,7 @@ func (h *mheap) initSpan(s *mspan, typ spanAllocType, spanclass spanClass, base,
 func (h *mheap) grow(npage uintptr) (uintptr, bool) {
 	assertLockHeld(&h.lock)
 
-	firstGrow := h.curArena.base == 0
+	firstGrow := h.curArena.base == 0 && len(h.heapArenas) == 0
 
 	// We must grow the heap in whole palloc chunks.
 	// We call sysMap below but note that because we
@@ -1554,11 +1562,8 @@ func (h *mheap) grow(npage uintptr) (uintptr, bool) {
 	ask := alignUp(npage, pallocChunkPages) * pageSize
 
 	totalGrowth := uintptr(0)
-	// This may overflow because ask could be very large
-	// and is otherwise unrelated to h.curArena.base.
-	end := h.curArena.base + ask
-	nBase := alignUp(end, physPageSize)
-	if nBase > h.curArena.end || /* overflow */ end < h.curArena.base {
+	nBase := alignUp(h.curArena.base+ask, physPageSize)
+	if ask > makeAddrRange(h.curArena.base, h.curArena.end).size() {
 		// Not enough room in the current arena. Allocate more
 		// arena space. This may not be contiguous with the
 		// current arena, so we have to request the full ask.
@@ -1606,10 +1611,8 @@ func (h *mheap) grow(npage uintptr) (uintptr, bool) {
 			}
 		}
 
-		// Recalculate nBase.
-		// We know this won't overflow, because sysAlloc returned
-		// a valid region starting at h.curArena.base which is at
-		// least ask bytes in size.
+		// Recalculate nBase. This may be zero on wasm32 to represent
+		// the exclusive end of the address space.
 		nBase = alignUp(h.curArena.base+ask, physPageSize)
 	}
 

@@ -106,15 +106,22 @@ func main() {
 	}
 
 	for arch, genFn := range arches {
-		f, err := os.Create(fmt.Sprintf("preempt_%s.s", arch))
-		if err != nil {
-			log.Fatal(err)
+		// wasm and wasm32 share the same stub, emitted to both filenames.
+		fileArches := []string{arch}
+		if arch == "wasm" {
+			fileArches = []string{"wasm", "wasm32"}
 		}
-		g := gen{f, arch}
-		g.asmHeader()
-		genFn(&g)
-		if err := f.Close(); err != nil {
-			log.Fatal(err)
+		for _, fileArch := range fileArches {
+			f, err := os.Create(fmt.Sprintf("preempt_%s.s", fileArch))
+			if err != nil {
+				log.Fatal(err)
+			}
+			g := gen{f, arch}
+			g.asmHeader()
+			genFn(&g)
+			if err := f.Close(); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 }

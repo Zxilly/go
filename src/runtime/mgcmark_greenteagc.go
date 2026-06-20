@@ -1217,7 +1217,8 @@ func scanObject(b uintptr, gcw *gcWork) {
 			// these will be marked as "no more pointers",
 			// so we'll drop out immediately when we go to
 			// scan those.
-			for oblet := b + maxObletBytes; oblet < s.base()+s.elemsize; oblet += maxObletBytes {
+			for i, n := uintptr(1), (s.elemsize-1)/maxObletBytes; i <= n; i++ {
+				oblet := b + i*maxObletBytes
 				if !gcw.putObjFast(oblet) {
 					gcw.putObj(oblet)
 				}
