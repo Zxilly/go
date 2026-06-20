@@ -146,15 +146,15 @@ func s15a8(x *[15]int64) [15]int64 {
 		// On not-amd64, test the host architecture and os
 		arches := []string{runtime.GOARCH}
 		goos0 := runtime.GOOS
-		if runtime.GOARCH == "amd64" { // Test many things with "linux" (wasm will get "js")
-			arches = []string{"arm", "arm64", "386", "amd64", "mips", "mips64", "loong64", "ppc64le", "riscv64", "s390x", "wasm"}
+		if runtime.GOARCH == "amd64" { // Test many things with "linux" (wasm targets get "js")
+			arches = []string{"arm", "arm64", "386", "amd64", "mips", "mips64", "loong64", "ppc64le", "riscv64", "s390x", "wasm", "wasm32"}
 			goos0 = "linux"
 		}
 
 		for _, arch := range arches {
 			t.Run(arch, func(t *testing.T) {
 				goos := goos0
-				if arch == "wasm" {
+				if arch == "wasm" || arch == "wasm32" {
 					goos = "js"
 				}
 				_, err := testCopy(t, dir, arch, goos, copy, outcopy)

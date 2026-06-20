@@ -363,7 +363,7 @@ func CreateWasmImportWrapper(fn *ir.Func) bool {
 	if fn.WasmImport == nil {
 		return false
 	}
-	if buildcfg.GOARCH != "wasm" {
+	if buildcfg.GOARCH != "wasm" && buildcfg.GOARCH != "wasm32" {
 		base.FatalfAt(fn.Pos(), "CreateWasmImportWrapper call not supported on %s: func was %v", buildcfg.GOARCH, fn)
 	}
 
@@ -386,7 +386,7 @@ func GenWasmExportWrapper(wrapped *ir.Func) {
 	if wrapped.WasmExport == nil {
 		return
 	}
-	if buildcfg.GOARCH != "wasm" {
+	if buildcfg.GOARCH != "wasm" && buildcfg.GOARCH != "wasm32" {
 		base.FatalfAt(wrapped.Pos(), "GenWasmExportWrapper call not supported on %s: func was %v", buildcfg.GOARCH, wrapped)
 	}
 
@@ -540,9 +540,17 @@ func wasmElemTypeAllowed(t *types.Type) bool {
 		}
 		return seenHostLayout
 	}
-	// Pointer, and all pointerful types are not allowed, as pointers have
-	// different width on the Go side and the host side. (It will be allowed
-	// on GOARCH=wasm32.)
+	// On wasm32 a pointer is 32-bit on both the Go and the host side, so a bare
+	// pointer may cross the boundary; on wasm it is 64-bit on the Go side, so it
+	// may not. Multi-word kinds (string, slice, map, chan, func, interface,
+	// complex) are Go runtime representations with no stable host ABI and are
+	// never allowed.
+	if buildcfg.GOARCH == "wasm32" {
+		switch t.Kind() {
+		case types.TPTR, types.TUNSAFEPTR:
+			return true
+		}
+	}
 	return false
 }
 

@@ -194,7 +194,7 @@ func InitConfig(config *ssa.Config) {
 	ir.Syms.Zerobase = typecheck.LookupRuntimeVar("zerobase")
 	ir.Syms.ZeroVal = typecheck.LookupRuntimeVar("zeroVal")
 
-	if Arch.LinkArch.Family == sys.Wasm {
+	if Arch.LinkArch.InFamily(sys.Wasm) {
 		BoundsCheckFunc[ssa.BoundsIndex] = typecheck.LookupRuntimeFunc("goPanicIndex")
 		BoundsCheckFunc[ssa.BoundsIndexU] = typecheck.LookupRuntimeFunc("goPanicIndexU")
 		BoundsCheckFunc[ssa.BoundsSliceAlen] = typecheck.LookupRuntimeFunc("goPanicSliceAlen")
@@ -212,6 +212,25 @@ func InitConfig(config *ssa.Config) {
 		BoundsCheckFunc[ssa.BoundsSlice3C] = typecheck.LookupRuntimeFunc("goPanicSlice3C")
 		BoundsCheckFunc[ssa.BoundsSlice3CU] = typecheck.LookupRuntimeFunc("goPanicSlice3CU")
 		BoundsCheckFunc[ssa.BoundsConvert] = typecheck.LookupRuntimeFunc("goPanicSliceConvert")
+
+		// On wasm32 (PtrSize=4) a 64-bit index with a non-zero high word is
+		// reported through these extend variants.
+		ExtendCheckFunc[ssa.BoundsIndex] = typecheck.LookupRuntimeFunc("goPanicExtendIndex")
+		ExtendCheckFunc[ssa.BoundsIndexU] = typecheck.LookupRuntimeFunc("goPanicExtendIndexU")
+		ExtendCheckFunc[ssa.BoundsSliceAlen] = typecheck.LookupRuntimeFunc("goPanicExtendSliceAlen")
+		ExtendCheckFunc[ssa.BoundsSliceAlenU] = typecheck.LookupRuntimeFunc("goPanicExtendSliceAlenU")
+		ExtendCheckFunc[ssa.BoundsSliceAcap] = typecheck.LookupRuntimeFunc("goPanicExtendSliceAcap")
+		ExtendCheckFunc[ssa.BoundsSliceAcapU] = typecheck.LookupRuntimeFunc("goPanicExtendSliceAcapU")
+		ExtendCheckFunc[ssa.BoundsSliceB] = typecheck.LookupRuntimeFunc("goPanicExtendSliceB")
+		ExtendCheckFunc[ssa.BoundsSliceBU] = typecheck.LookupRuntimeFunc("goPanicExtendSliceBU")
+		ExtendCheckFunc[ssa.BoundsSlice3Alen] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3Alen")
+		ExtendCheckFunc[ssa.BoundsSlice3AlenU] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3AlenU")
+		ExtendCheckFunc[ssa.BoundsSlice3Acap] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3Acap")
+		ExtendCheckFunc[ssa.BoundsSlice3AcapU] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3AcapU")
+		ExtendCheckFunc[ssa.BoundsSlice3B] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3B")
+		ExtendCheckFunc[ssa.BoundsSlice3BU] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3BU")
+		ExtendCheckFunc[ssa.BoundsSlice3C] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3C")
+		ExtendCheckFunc[ssa.BoundsSlice3CU] = typecheck.LookupRuntimeFunc("goPanicExtendSlice3CU")
 	}
 
 	// Wasm (all asm funcs with special ABIs)
@@ -2952,7 +2971,7 @@ func (s *state) conv(n ir.Node, v *ssa.Value, ft, tt *types.Type) *ssa.Value {
 				conv = conv1
 			}
 		}
-		if Arch.LinkArch.Family == sys.ARM64 || Arch.LinkArch.Family == sys.Wasm || Arch.LinkArch.Family == sys.S390X || s.softFloat {
+		if Arch.LinkArch.Family == sys.ARM64 || Arch.LinkArch.InFamily(sys.Wasm) || Arch.LinkArch.Family == sys.S390X || s.softFloat {
 			if conv1, ok1 := uint64fpConvOpToSSA[twoTypes{s.concreteEtype(ft), s.concreteEtype(tt)}]; ok1 {
 				conv = conv1
 			}
@@ -5227,7 +5246,7 @@ func (s *state) call(n *ir.CallExpr, k callKind, returnResultAddr bool, deferExt
 // maybeNilCheckClosure checks if a nil check of a closure is needed in some
 // architecture-dependent situations and, if so, emits the nil check.
 func (s *state) maybeNilCheckClosure(closure *ssa.Value, k callKind) {
-	if Arch.LinkArch.Family == sys.Wasm || buildcfg.GOOS == "aix" && k != callGo {
+	if Arch.LinkArch.InFamily(sys.Wasm) || buildcfg.GOOS == "aix" && k != callGo {
 		// On AIX, the closure needs to be verified as fn can be nil, except if it's a call go. This needs to be handled by the runtime to have the "go of nil func value" error.
 		// TODO(neelance): On other architectures this should be eliminated by the optimization steps
 		s.nilCheck(closure)
@@ -5544,7 +5563,7 @@ func (s *state) boundsCheck(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 	b.AddEdgeTo(bPanic)
 
 	s.startBlock(bPanic)
-	if Arch.LinkArch.Family == sys.Wasm {
+	if Arch.LinkArch.InFamily(sys.Wasm) {
 		// TODO(khr): figure out how to do "register" based calling convention for bounds checks.
 		// Should be similar to gcWriteBarrier, but I can't make it work.
 		s.rtcall(BoundsCheckFunc[kind], false, nil, idx, len)
@@ -7264,7 +7283,7 @@ func genssa(htmlWriter ssa.HTMLWriter, f *ssa.Func, pp *objw.Progs) {
 		// inline marks.
 		for p := s.pp.Text; p != nil; p = p.Link {
 			if p.As == obj.ANOP || p.As == obj.AFUNCDATA || p.As == obj.APCDATA || p.As == obj.ATEXT ||
-				p.As == obj.APCALIGN || p.As == obj.APCALIGNMAX || Arch.LinkArch.Family == sys.Wasm {
+				p.As == obj.APCALIGN || p.As == obj.APCALIGNMAX || Arch.LinkArch.InFamily(sys.Wasm) {
 				// Don't use 0-sized instructions as inline marks, because we need
 				// to identify inline mark instructions by pc offset.
 				// (Some of these instructions are sometimes zero-sized, sometimes not.
@@ -7734,19 +7753,31 @@ func (s *state) extendIndex(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 	if size > s.config.PtrSize {
 		// truncate 64-bit indexes on 32-bit pointer archs. Test the
 		// high word and branch to out-of-bounds failure if it is not 0.
-		var lo *ssa.Value
+		// On wasm32, Int64Lo/Int64Hi are not lowered.
+		useShift := s.config.RegSize == 8
+		loType := types.Types[types.TUINT]
 		if idx.Type.IsSigned() {
-			lo = s.newValue1(ssaop.OpInt64Lo, types.Types[types.TINT], idx)
+			loType = types.Types[types.TINT]
+		}
+		var lo *ssa.Value
+		if useShift {
+			lo = s.newValue1(ssaop.OpTrunc64to32, loType, idx)
 		} else {
-			lo = s.newValue1(ssaop.OpInt64Lo, types.Types[types.TUINT], idx)
+			lo = s.newValue1(ssaop.OpInt64Lo, loType, idx)
 		}
 		if bounded || base.Flag.B != 0 {
 			return lo
 		}
 		bNext := s.f.NewBlock(block.BlockPlain)
 		bPanic := s.f.NewBlock(block.BlockExit)
-		hi := s.newValue1(ssaop.OpInt64Hi, types.Types[types.TUINT32], idx)
-		cmp := s.newValue2(ssaop.OpEq32, types.Types[types.TBOOL], hi, s.constInt32(types.Types[types.TUINT32], 0))
+		var hi, cmp *ssa.Value
+		if useShift {
+			hiShift := s.newValue2(ssaop.OpRsh64Ux64, types.Types[types.TUINT64], idx, s.constInt64(types.Types[types.TUINT64], 32))
+			hi = s.newValue1(ssaop.OpTrunc64to32, types.Types[types.TUINT32], hiShift)
+		} else {
+			hi = s.newValue1(ssaop.OpInt64Hi, types.Types[types.TUINT32], idx)
+		}
+		cmp = s.newValue2(ssaop.OpEq32, types.Types[types.TBOOL], hi, s.constInt32(types.Types[types.TUINT32], 0))
 		if !idx.Type.IsSigned() {
 			switch kind {
 			case ssa.BoundsIndex:
@@ -7775,8 +7806,12 @@ func (s *state) extendIndex(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 		b.AddEdgeTo(bPanic)
 
 		s.startBlock(bPanic)
-		mem := s.newValue4I(ssaop.OpPanicExtend, types.TypeMem, int64(kind), hi, lo, len, s.mem())
-		s.endBlock().SetControl(mem)
+		if Arch.LinkArch.InFamily(sys.Wasm) {
+			s.rtcall(ExtendCheckFunc[kind], false, nil, hi, lo, len)
+		} else {
+			mem := s.newValue4I(ssaop.OpPanicExtend, types.TypeMem, int64(kind), hi, lo, len, s.mem())
+			s.endBlock().SetControl(mem)
+		}
 		s.startBlock(bNext)
 
 		return lo
@@ -8169,3 +8204,8 @@ func isStructNotSIMD(t *types.Type) bool {
 }
 
 var BoundsCheckFunc [ssa.BoundsKindCount]*obj.LSym
+
+// ExtendCheckFunc holds the runtime functions used to report a bounds failure
+// for a 64-bit index with a non-zero high word on wasm32. Only populated for
+// the Wasm family; other 32-bit arches use the PanicExtend SSA op instead.
+var ExtendCheckFunc [ssa.BoundsKindCount]*obj.LSym

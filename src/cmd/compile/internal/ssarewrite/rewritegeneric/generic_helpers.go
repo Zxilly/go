@@ -75,17 +75,17 @@ func canLoadUnaligned(c *ssa.Config) bool {
 	return c.Ctxt.Arch.Alignment == 1
 }
 
-// canRotate reports whether the architecture supports
-// rotates of integer registers with the given number of bits.
+// canRotate reports whether the architecture supports integer rotates
+// with the given number of bits.
 func canRotate(c *ssa.Config, bits int64) bool {
-	if bits > c.PtrSize*8 {
-		// Don't rewrite to rotates bigger than the machine word.
+	if bits > c.RegSize*8 {
+		// Don't rewrite to rotates bigger than the supported integer width.
 		return false
 	}
 	switch c.Arch {
 	case "386", "amd64", "arm64", "loong64", "riscv64":
 		return true
-	case "arm", "s390x", "ppc64", "ppc64le", "wasm":
+	case "arm", "s390x", "ppc64", "ppc64le", "wasm", "wasm32":
 		return bits >= 32
 	default:
 		return false

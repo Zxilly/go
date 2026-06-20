@@ -98,10 +98,25 @@
 (Slicemask x) => (I64ShrS (I64Sub (I64Const [0]) x) (I64Const [63]))
 
 // Lowering truncation
-// Because we ignore the high parts, truncates are just copies.
-(Trunc64to(32|16|8) ...) => (Copy ...)
-(Trunc32to(16|8)    ...) => (Copy ...)
-(Trunc16to8         ...) => (Copy ...)
+// wasm32 uses i64 WebAssembly locals for 32-bit Go integer values. Keep the
+// unused high bits canonical so that later rewrites may safely elide explicit
+// extensions before comparisons and address calculations.
+(Trunc64to32 x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend32S x)
+(Trunc64to32 x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xffffffff]))
+(Trunc64to16 x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend16S x)
+(Trunc64to16 x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xffff]))
+(Trunc64to8  x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend8S x)
+(Trunc64to8  x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xff]))
+(Trunc32to16 x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend16S x)
+(Trunc32to16 x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xffff]))
+(Trunc32to8  x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend8S x)
+(Trunc32to8  x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xff]))
+(Trunc16to8  x) && config.PtrSize == 4 && v.Type.IsSigned()  => (I64Extend8S x)
+(Trunc16to8  x) && config.PtrSize == 4 && !v.Type.IsSigned() => (I64And x (I64Const [0xff]))
+// On pointer-64 wasm, consumers ignore the high parts, so truncates are copies.
+(Trunc64to(32|16|8) x) => (Copy x)
+(Trunc32to(16|8)    x) => (Copy x)
+(Trunc16to8         x) => (Copy x)
 
 // Lowering float <=> int
 (Cvt32to(64|32)F x) => (F(64|32)ConvertI64S (SignExt32to64 x))
@@ -209,7 +224,8 @@
 (Eq16  x y) => (I64Eq (ZeroExt16to64 x) (ZeroExt16to64 y))
 (Eq8   x y) => (I64Eq (ZeroExt8to64  x) (ZeroExt8to64  y))
 (EqB   ...) => (I64Eq ...)
-(EqPtr ...) => (I64Eq ...)
+(EqPtr x y) && config.PtrSize == 4 => (I64Eq (ZeroExt32to64 x) (ZeroExt32to64 y))
+(EqPtr x y) => (I64Eq x y)
 (Eq(64|32)F ...) => (F(64|32)Eq ...)
 
 (Neq64  ...) => (I64Ne ...)
@@ -217,7 +233,8 @@
 (Neq16  x y) => (I64Ne (ZeroExt16to64 x) (ZeroExt16to64 y))
 (Neq8   x y) => (I64Ne (ZeroExt8to64  x) (ZeroExt8to64  y))
 (NeqB   ...) => (I64Ne ...)
-(NeqPtr ...) => (I64Ne ...)
+(NeqPtr x y) && config.PtrSize == 4 => (I64Ne (ZeroExt32to64 x) (ZeroExt32to64 y))
+(NeqPtr x y) => (I64Ne x y)
 (Neq(64|32)F ...) => (F(64|32)Ne ...)
 
 // Lowering loads
@@ -331,9 +348,12 @@
 
 // Miscellaneous
 (Convert ...) => (LoweredConvert ...)
+(IsNonNil p) && config.PtrSize == 4 => (I64Eqz (I64Eqz (ZeroExt32to64 p)))
 (IsNonNil p) => (I64Eqz (I64Eqz p))
-(IsInBounds ...) => (I64LtU ...)
-(IsSliceInBounds ...) => (I64LeU ...)
+(IsInBounds idx len) && config.PtrSize == 4 => (I64LtU (ZeroExt32to64 idx) (ZeroExt32to64 len))
+(IsInBounds idx len) => (I64LtU idx len)
+(IsSliceInBounds idx len) && config.PtrSize == 4 => (I64LeU (ZeroExt32to64 idx) (ZeroExt32to64 len))
+(IsSliceInBounds idx len) => (I64LeU idx len)
 (NilCheck ...) => (LoweredNilCheck ...)
 (GetClosurePtr ...) => (LoweredGetClosurePtr ...)
 (GetCallerPC ...) => (LoweredGetCallerPC ...)
@@ -422,6 +442,24 @@
 (I64Extend32S x:(I64And _ (I64Const [c]))) && c >= 0 && int64(int32(c)) == c => x
 (I64Extend16S x:(I64And _ (I64Const [c]))) && c >= 0 && int64(int16(c)) == c => x
 (I64Extend8S  x:(I64And _ (I64Const [c]))) && c >= 0 && int64(int8(c))  == c => x
+
+// Sub-64-bit loads already extend; catch cases lowered after generic folds.
+(I64Extend32S x:(I64Load32S _ _)) => x
+(I64Extend16S x:(I64Load16S _ _)) => x
+(I64Extend8S  x:(I64Load8S  _ _)) => x
+(I64And x:(I64Load32U _ _) (I64Const [0xffffffff])) => x
+(I64And x:(I64Load16U _ _) (I64Const [0xffff]))     => x
+(I64And x:(I64Load8U  _ _) (I64Const [0xff]))       => x
+
+// Signed <=32-bit args are sign-extended when genssa materializes them.
+(I64Extend32S x:(Arg <t>)) && t.Size() == 4 && t.IsSigned() => x
+(I64Extend16S x:(Arg <t>)) && t.Size() == 2 && t.IsSigned() => x
+(I64Extend8S  x:(Arg <t>)) && t.Size() == 1 && t.IsSigned() => x
+
+// Fold constant sign-extensions.
+(I64Extend32S (I64Const [c])) => (I64Const [int64(int32(c))])
+(I64Extend16S (I64Const [c])) => (I64Const [int64(int16(c))])
+(I64Extend8S  (I64Const [c])) => (I64Const [int64(int8(c))])
 
 // TODO: declare these operations as commutative and get rid of these rules?
 (I64Add (I64Const [x]) y) && y.Op != ssaop.OpWasmI64Const => (I64Add y (I64Const [x]))
