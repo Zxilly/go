@@ -1786,7 +1786,7 @@ func TestRootConcurrentClose(t *testing.T) {
 				first = false
 			}
 			f.Close()
-			if runtime.GOARCH == "wasm" {
+			if runtime.GOARCH == "wasm" || runtime.GOARCH == "wasm32" {
 				// TODO(go.dev/issue/71134) can lead to goroutine starvation.
 				runtime.Gosched()
 			}
@@ -2011,7 +2011,7 @@ func TestRootName(t *testing.T) {
 // TestRootNoLstat verifies that we do not use lstat (possibly escaping the root)
 // when reading directories in a Root.
 func TestRootNoLstat(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" || runtime.GOARCH == "wasm32" {
 		t.Skip("wasm lacks fstatat")
 	}
 

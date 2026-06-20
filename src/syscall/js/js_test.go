@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && (wasm || wasm32)
 
 // To run these tests:
 //
@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"strconv"
 	"syscall/js"
 	"testing"
 )
@@ -177,10 +178,12 @@ func TestIntConversion(t *testing.T) {
 	testIntConversion(t, -1)
 	testIntConversion(t, 1<<20)
 	testIntConversion(t, -1<<20)
-	testIntConversion(t, 1<<40)
-	testIntConversion(t, -1<<40)
-	testIntConversion(t, 1<<60)
-	testIntConversion(t, -1<<60)
+	if strconv.IntSize == 64 {
+		// These values only fit in a 64-bit int.
+		for _, want := range []int64{1 << 40, -1 << 40, 1 << 60, -1 << 60} {
+			testIntConversion(t, int(want))
+		}
+	}
 }
 
 func testIntConversion(t *testing.T, want int) {
