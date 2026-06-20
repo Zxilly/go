@@ -141,6 +141,16 @@ var Linkwasm = obj.LinkArch{
 	UnaryDst:   unaryDst,
 }
 
+// Linkwasm32 is the wasm32 (PtrSize=4) variant. It shares the entire wasm
+// backend; only the sys.Arch differs, driving type sizes and the pointer ABI.
+var Linkwasm32 = obj.LinkArch{
+	Arch:       sys.ArchWasm32,
+	Init:       instinit,
+	Preprocess: preprocess,
+	Assemble:   assemble,
+	UnaryDst:   unaryDst,
+}
+
 var (
 	morestack             *obj.LSym
 	morestackNoCtxt       *obj.LSym
@@ -210,7 +220,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	// generate the code to translate from our internal Go-stack
 	// based call convention to the native webassembly call convention.
 	if s.Func().WasmImport != nil {
-		genWasmImportWrapper(s, appendp)
+		genWasmImportWrapper(ctxt, s, appendp)
 
 		// It should be 0 already, but we'll set it to 0 anyway just to be sure
 		// that the code below which adds frame expansion code to the function body
@@ -218,7 +228,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		// body is just the code to translate and call the imported function.
 		framesize = 0
 	} else if s.Func().WasmExport != nil {
-		genWasmExportWrapper(s, appendp)
+		genWasmExportWrapper(ctxt, s, appendp)
 	}
 
 	if framesize > 0 && s.Func().WasmExport == nil { // genWasmExportWrapper has its own prologue generation
@@ -766,7 +776,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 }
 
 // Generate function body for wasmimport wrapper function.
-func genWasmImportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args ...obj.Addr) *obj.Prog) {
+func genWasmImportWrapper(ctxt *obj.Link, s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args ...obj.Addr) *obj.Prog) {
 	wi := s.Func().WasmImport
 	wi.CreateAuxSym()
 	p := s.Func().Text
@@ -883,7 +893,12 @@ func genWasmImportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 				p = appendp(p, ASet, regAddr(REG_R0))
 				p = appendp(p, AGet, regAddr(REG_SP))
 				p = appendp(p, AGet, regAddr(REG_R0))
-				p = appendp(p, AI64Store, constAddr(storeOffset))
+				// On wasm32 the pointer result slot is 4 bytes wide.
+				ptrStore := AI64Store
+				if ctxt.Arch.PtrSize == 4 {
+					ptrStore = AI64Store32
+				}
+				p = appendp(p, ptrStore, constAddr(storeOffset))
 			case obj.WasmBool:
 				p = appendp(p, AI64ExtendI32U)
 				p = appendp(p, ASet, regAddr(REG_R0))
@@ -900,7 +915,7 @@ func genWasmImportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 }
 
 // Generate function body for wasmexport wrapper function.
-func genWasmExportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args ...obj.Addr) *obj.Prog) {
+func genWasmExportWrapper(ctxt *obj.Link, s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args ...obj.Addr) *obj.Prog) {
 	we := s.Func().WasmExport
 	we.CreateAuxSym()
 	p := s.Func().Text
@@ -946,7 +961,12 @@ func genWasmExportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 			p = appendp(p, AV128Store, constAddr(f.Offset))
 		case obj.WasmPtr:
 			p = appendp(p, AI64ExtendI32U)
-			p = appendp(p, AI64Store, constAddr(f.Offset))
+			// On wasm32 a pointer param slot is 4 bytes wide.
+			ptrStore := AI64Store
+			if ctxt.Arch.PtrSize == 4 {
+				ptrStore = AI64Store32
+			}
+			p = appendp(p, ptrStore, constAddr(f.Offset))
 		case obj.WasmBool:
 			p = appendp(p, AI32Store8, constAddr(f.Offset))
 		default:
