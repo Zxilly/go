@@ -94,7 +94,7 @@ func TestBoringGenerateKey(t *testing.T) {
 
 func TestBoringFinalizers(t *testing.T) {
 	if runtime.GOOS == "nacl" || runtime.GOOS == "js" {
-		// Times out on nacl and js/wasm (without BoringCrypto)
+		// Times out on nacl and js WebAssembly targets (without BoringCrypto)
 		// but not clear why - probably consuming rand.Reader too quickly
 		// and being throttled. Also doesn't really matter.
 		t.Skipf("skipping on %s/%s", runtime.GOOS, runtime.GOARCH)

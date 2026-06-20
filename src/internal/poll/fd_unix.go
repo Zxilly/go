@@ -663,7 +663,7 @@ func DupCloseOnExec(fd int) (int, string, error) {
 		}
 		switch err {
 		case syscall.EINVAL, syscall.ENOSYS:
-			// Old kernel, or js/wasm (which returns
+			// Old kernel, or a js WebAssembly target (which returns
 			// ENOSYS). Fall back to the portable way from
 			// now on.
 			dupCloexecUnsupported.Store(true)

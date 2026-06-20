@@ -26,8 +26,8 @@ import (
 //   - On macOS, iOS, and OpenBSD Reader, uses arc4random_buf(3).
 //   - On NetBSD, Reader uses the kern.arandom sysctl.
 //   - On Windows, Reader uses the ProcessPrng API.
-//   - On js/wasm, Reader uses the Web Crypto API.
-//   - On wasip1/wasm, Reader uses random_get.
+//   - On js/wasm and js/wasm32, Reader uses the Web Crypto API.
+//   - On wasip1/wasm and wasip1/wasm32, Reader uses random_get.
 //
 // In FIPS 140-3 mode, the output passes through an SP 800-90A Rev. 1
 // Deterministric Random Bit Generator (DRBG).

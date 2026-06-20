@@ -5,7 +5,7 @@
 //go:build !js && !wasip1
 
 // TODO(@musiol, @odeke-em): re-unify this entire file back into
-// example.go when js/wasm gets an os.Pipe implementation
+// example.go when WebAssembly targets get an os.Pipe implementation
 // and no longer needs this separation.
 
 package testing
