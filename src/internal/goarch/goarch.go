@@ -43,6 +43,9 @@ const ArchFamily ArchFamilyType = _ArchFamily
 // BigEndian reports whether the architecture is big-endian.
 const BigEndian = IsArmbe|IsArm64be|IsMips|IsMips64|IsPpc|IsPpc64|IsS390|IsS390x|IsSparc|IsSparc64 == 1
 
+// IsWasmAny is 1 on any wasm flavor (wasm or wasm32), 0 otherwise.
+const IsWasmAny = IsWasm | IsWasm32
+
 // DefaultPhysPageSize is the default physical page size.
 const DefaultPhysPageSize = _DefaultPhysPageSize
 
@@ -50,8 +53,9 @@ const DefaultPhysPageSize = _DefaultPhysPageSize
 // The various PC tables record PC deltas pre-divided by PCQuantum.
 const PCQuantum = _PCQuantum
 
-// Int64Align is the required alignment for a 64-bit integer (4 on 32-bit systems, 8 on 64-bit).
-const Int64Align = PtrSize
+// Int64Align is the required alignment for a 64-bit integer. It is 4 on
+// conventional 32-bit systems and 8 on 64-bit systems and wasm32.
+const Int64Align = PtrSize + 4*IsWasm32
 
 // MinFrameSize is the size of the system-reserved words at the bottom
 // of a frame (just above the architectural stack pointer).
