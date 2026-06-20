@@ -48,7 +48,7 @@ func TestWeakCertCache(t *testing.T) {
 			}
 			// Explicitly yield to the scheduler.
 			//
-			// On single-threaded platforms like js/wasm a busy-loop might
+			// On single-threaded platforms like js WebAssembly targets a busy-loop might
 			// never call into the scheduler for the full timeout, meaning
 			// that if we arrive here and the cleanup hasn't already run,
 			// we'll simply loop until the timeout. Busy-loops put us at the

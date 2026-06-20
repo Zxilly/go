@@ -1546,6 +1546,7 @@ var (
 		"ppc64x":  {}, // A pseudo-arch representing both ppc64 and ppc64le
 		"s390x":   {},
 		"wasm":    {},
+		"wasm32":  {},
 		"riscv64": {"GORISCV64", "rva20u64", "rva22u64", "rva23u64"},
 	}
 )
@@ -1631,7 +1632,7 @@ func (t test) wantedAsmOpcodes(fn string) asmChecks {
 				os, arch, subarch = "linux", archspec[0], archspec[1][1:]
 			default: // 1 component: "386"
 				os, arch, subarch = "linux", archspec[0], ""
-				if arch == "wasm" {
+				if arch == "wasm" || arch == "wasm32" {
 					os = "js"
 				}
 			}

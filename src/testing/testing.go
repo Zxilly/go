@@ -1588,7 +1588,7 @@ func (c *common) makeTempDir() (string, error) {
 	// created by a test, each numbered sequentially.
 	c.tempDirMu.Lock()
 	var nonExistent bool
-	if c.tempDir == "" { // Usually the case with js/wasm
+	if c.tempDir == "" { // Usually the case with js WebAssembly targets
 		nonExistent = true
 	} else {
 		_, err := os.Stat(c.tempDir)
