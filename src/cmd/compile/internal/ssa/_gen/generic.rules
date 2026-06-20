@@ -1472,13 +1472,13 @@
 (StaticLECall {callAux} sptr (Addr {scon} (SB)) (Const64 [8]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8
+  && canLoadUnaligned(config) && config.RegSize == 8
   => (MakeResult (Eq64 (Load <typ.Int64> sptr mem) (Const64 <typ.Int64> [int64(ssa.Read64(scon,0,config.Ctxt.Arch.ByteOrder))])) mem)
 
 (StaticLECall {callAux} (Addr {scon} (SB)) sptr (Const64 [8]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8
+  && canLoadUnaligned(config) && config.RegSize == 8
   => (MakeResult (Eq64 (Load <typ.Int64> sptr mem) (Const64 <typ.Int64> [int64(ssa.Read64(scon,0,config.Ctxt.Arch.ByteOrder))])) mem)
 
 (StaticLECall {callAux} sptr (Addr {scon} (SB)) (Const64 [3]) mem)
@@ -1512,7 +1512,7 @@
 (StaticLECall {callAux} sptr (Addr {scon} (SB)) (Const64 [5]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1526,7 +1526,7 @@
 (StaticLECall {callAux} (Addr {scon} (SB)) sptr (Const64 [5]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1540,7 +1540,7 @@
 (StaticLECall {callAux} sptr (Addr {scon} (SB)) (Const64 [6]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1554,7 +1554,7 @@
 (StaticLECall {callAux} (Addr {scon} (SB)) sptr (Const64 [6]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1568,7 +1568,7 @@
 (StaticLECall {callAux} sptr (Addr {scon} (SB)) (Const64 [7]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1582,7 +1582,7 @@
 (StaticLECall {callAux} (Addr {scon} (SB)) sptr (Const64 [7]) mem)
   && ssa.IsSameCall(callAux, "runtime.memequal")
   && ssa.SymIsRO(scon)
-  && canLoadUnaligned(config) && config.PtrSize == 8 =>
+  && canLoadUnaligned(config) && config.RegSize == 8 =>
   (MakeResult
     (Eq64
       (Or64 <typ.Int64>
@@ -1626,7 +1626,7 @@
   => (Const32 <typ.Int32> [int32(ssa.Read32(scon,0,config.Ctxt.Arch.ByteOrder))])
 
 (MemEq sptr tptr (Const64 [8]) mem)
-  && canLoadUnaligned(config) && config.PtrSize == 8
+  && canLoadUnaligned(config) && config.RegSize == 8
   => (Eq64 (Load <typ.Int64> sptr mem) (Load <typ.Int64> tptr mem))
 
 (Load <typ.Int64> sptr:(Addr {scon} (SB)) mem)

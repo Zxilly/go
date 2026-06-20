@@ -7,12 +7,14 @@ package types2
 import (
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 // Signal size changes of important structures.
 
 func TestSizeof(t *testing.T) {
 	const _64bit = ^uint(0)>>32 != 0
+	const _wasm32 = unsafe.Sizeof(uintptr(0)) == 4 && unsafe.Alignof(uint64(0)) == 8
 
 	var tests = []struct {
 		val    any     // type as a value
@@ -56,6 +58,11 @@ func TestSizeof(t *testing.T) {
 		want := test._32bit
 		if _64bit {
 			want = test._64bit
+		} else if _wasm32 {
+			switch test.val.(type) {
+			case TypeParam:
+				want = 32
+			}
 		}
 		if got != want {
 			t.Errorf("unsafe.Sizeof(%T) = %d, want %d", test.val, got, want)

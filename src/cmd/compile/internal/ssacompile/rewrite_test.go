@@ -13,6 +13,16 @@ import (
 
 	"cmd/compile/internal/rttype"
 	"cmd/compile/internal/ssa"
+	"cmd/compile/internal/ssa/block"
+	"cmd/compile/internal/ssa/ssaop"
+	"cmd/compile/internal/ssarewrite/rewritedivmod"
+	"cmd/compile/internal/ssarewrite/rewritegeneric"
+	"cmd/compile/internal/ssarewrite/rewritewasm"
+	"cmd/compile/internal/types"
+	"cmd/internal/obj"
+	"cmd/internal/obj/wasm"
+	"cmd/internal/obj/x86"
+	"cmd/internal/src"
 )
 
 // We generate memmove for copy(x[1:], x[:]), however we may change it to OpMove,
@@ -34,6 +44,122 @@ func TestMoveSmall(t *testing.T) {
 		if int(x[i]) != i {
 			t.Errorf("Memmove got converted to OpMove in alias-unsafe way. Got %d instead of %d in position %d", int(x[i]), i, i+1)
 		}
+	}
+}
+
+func TestMemEq8RewriteUsesRegSize(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		arch        string
+		linkArch    *obj.LinkArch
+		wantRewrite bool
+		wantOp      ssaop.Op
+	}{
+		{name: "386", arch: "386", linkArch: &x86.Link386, wantRewrite: false, wantOp: ssaop.OpMemEq},
+		{name: "wasm32", arch: "wasm32", linkArch: &wasm.Linkwasm32, wantRewrite: true, wantOp: ssaop.OpEq64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newConfig(tc.arch, *ssa.NewTypes(), obj.Linknew(tc.linkArch), true, false)
+			f := cfg.NewFunc(nil, new(ssa.Cache))
+			b := f.NewBlock(block.BlockPlain)
+			f.Entry = b
+
+			pos := src.NoXPos
+			sptr := b.NewValue0(pos, ssaop.OpArg, cfg.Types.BytePtr)
+			tptr := b.NewValue0(pos, ssaop.OpArg, cfg.Types.BytePtr)
+			size := b.NewValue0I(pos, ssaop.OpConst64, cfg.Types.Int64, 8)
+			mem := b.NewValue0(pos, ssaop.OpInitMem, types.TypeMem)
+			v := b.NewValue4(pos, ssaop.OpMemEq, cfg.Types.Bool, sptr, tptr, size, mem)
+
+			if got := rewritegeneric.RewriteValue(v); got != tc.wantRewrite {
+				t.Fatalf("RewriteValue returned %v, want %v", got, tc.wantRewrite)
+			}
+			if v.Op != tc.wantOp {
+				t.Fatalf("RewriteValue left op %s, want %s", v.Op, tc.wantOp)
+			}
+		})
+	}
+}
+
+func TestWasm32TruncationCanonicalizesLowWord(t *testing.T) {
+	cfg := newConfig("wasm32", *ssa.NewTypes(), obj.Linknew(&wasm.Linkwasm32), true, false)
+	for _, tc := range []struct {
+		name string
+		typ  *types.Type
+		want ssaop.Op
+	}{
+		{name: "unsigned", typ: cfg.Types.UInt32, want: ssaop.OpWasmI64And},
+		{name: "signed", typ: cfg.Types.Int32, want: ssaop.OpWasmI64Extend32S},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := cfg.NewFunc(nil, new(ssa.Cache))
+			b := f.NewBlock(block.BlockPlain)
+			f.Entry = b
+			x := b.NewValue0(src.NoXPos, ssaop.OpArg, cfg.Types.UInt64)
+			v := b.NewValue1(src.NoXPos, ssaop.OpTrunc64to32, tc.typ, x)
+
+			if !rewritewasm.RewriteValue(v) {
+				t.Fatal("RewriteValue did not rewrite Trunc64to32")
+			}
+			if v.Op != tc.want {
+				t.Fatalf("Trunc64to32 lowered to %s, want %s", v.Op, tc.want)
+			}
+		})
+	}
+}
+
+func TestWasm32BoundsCanonicalizeOperands(t *testing.T) {
+	cfg := newConfig("wasm32", *ssa.NewTypes(), obj.Linknew(&wasm.Linkwasm32), true, false)
+	f := cfg.NewFunc(nil, new(ssa.Cache))
+	b := f.NewBlock(block.BlockPlain)
+	f.Entry = b
+
+	idx := b.NewValue0(src.NoXPos, ssaop.OpArg, cfg.Types.Uintptr)
+	len := b.NewValue0(src.NoXPos, ssaop.OpArg, cfg.Types.Uintptr)
+	v := b.NewValue2(src.NoXPos, ssaop.OpIsInBounds, cfg.Types.Bool, idx, len)
+	if !rewritewasm.RewriteValue(v) {
+		t.Fatal("RewriteValue did not rewrite IsInBounds")
+	}
+	if v.Op != ssaop.OpWasmI64LtU {
+		t.Fatalf("IsInBounds lowered to %s, want WasmI64LtU", v.Op)
+	}
+	for i, arg := range v.Args {
+		if arg.Op != ssaop.OpZeroExt32to64 {
+			t.Errorf("IsInBounds argument %d is %s, want ZeroExt32to64", i, arg.Op)
+		}
+	}
+}
+
+func TestWasm32Div32uUsesWasmPath(t *testing.T) {
+	cfg := newConfig("wasm32", *ssa.NewTypes(), obj.Linknew(&wasm.Linkwasm32), true, false)
+	f := cfg.NewFunc(nil, new(ssa.Cache))
+	b := f.NewBlock(block.BlockPlain)
+	f.Entry = b
+
+	x := b.NewValue0(src.NoXPos, ssaop.OpArg, cfg.Types.UInt32)
+	c := b.NewValue0I(src.NoXPos, ssaop.OpConst32, cfg.Types.UInt32, 7)
+	v := b.NewValue2(src.NoXPos, ssaop.OpDiv32u, cfg.Types.UInt32, x, c)
+	if !rewritedivmod.RewriteValue(v) {
+		t.Fatal("RewriteValue did not rewrite Div32u")
+	}
+
+	seen := make(map[ssa.ID]bool)
+	var hasAvg, hasHmul bool
+	var walk func(*ssa.Value)
+	walk = func(v *ssa.Value) {
+		if seen[v.ID] {
+			return
+		}
+		seen[v.ID] = true
+		hasAvg = hasAvg || v.Op == ssaop.OpAvg64u
+		hasHmul = hasHmul || v.Op == ssaop.OpHmul64u
+		for _, arg := range v.Args {
+			walk(arg)
+		}
+	}
+	walk(v)
+	if !hasAvg || hasHmul {
+		t.Fatalf("wasm32 Div32u rewrite has Avg64u=%v, Hmul64u=%v; want true, false", hasAvg, hasHmul)
 	}
 }
 

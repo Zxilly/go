@@ -392,8 +392,7 @@ func RewriteValue(v *ssa.Value) bool {
 		v.Op = ssaop.OpWasmI64Eq
 		return true
 	case ssaop.OpEqPtr:
-		v.Op = ssaop.OpWasmI64Eq
-		return true
+		return rewriteValue_OpEqPtr(v)
 	case ssaop.OpEqualFloat32x4:
 		v.Op = ssaop.OpWasmF32x4Eq
 		return true
@@ -570,13 +569,11 @@ func RewriteValue(v *ssa.Value) bool {
 		v.Op = ssaop.OpWasmLoweredInterCall
 		return true
 	case ssaop.OpIsInBounds:
-		v.Op = ssaop.OpWasmI64LtU
-		return true
+		return rewriteValue_OpIsInBounds(v)
 	case ssaop.OpIsNonNil:
 		return rewriteValue_OpIsNonNil(v)
 	case ssaop.OpIsSliceInBounds:
-		v.Op = ssaop.OpWasmI64LeU
-		return true
+		return rewriteValue_OpIsSliceInBounds(v)
 	case ssaop.OpLast:
 		return rewriteValue_OpLast(v)
 	case ssaop.OpLeq16:
@@ -919,8 +916,7 @@ func RewriteValue(v *ssa.Value) bool {
 		v.Op = ssaop.OpWasmI64Ne
 		return true
 	case ssaop.OpNeqPtr:
-		v.Op = ssaop.OpWasmI64Ne
-		return true
+		return rewriteValue_OpNeqPtr(v)
 	case ssaop.OpNilCheck:
 		v.Op = ssaop.OpWasmLoweredNilCheck
 		return true
@@ -1314,23 +1310,17 @@ func RewriteValue(v *ssa.Value) bool {
 		v.Op = ssaop.OpWasmF64Trunc
 		return true
 	case ssaop.OpTrunc16to8:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc16to8(v)
 	case ssaop.OpTrunc32to16:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc32to16(v)
 	case ssaop.OpTrunc32to8:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc32to8(v)
 	case ssaop.OpTrunc64to16:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc64to16(v)
 	case ssaop.OpTrunc64to32:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc64to32(v)
 	case ssaop.OpTrunc64to8:
-		v.Op = ssaop.OpCopy
-		return true
+		return rewriteValue_OpTrunc64to8(v)
 	case ssaop.OpTruncFloat32x4:
 		v.Op = ssaop.OpWasmF32x4Trunc
 		return true
@@ -1973,6 +1963,39 @@ func rewriteValue_OpEq8(v *ssa.Value) bool {
 		return true
 	}
 }
+func rewriteValue_OpEqPtr(v *ssa.Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (EqPtr x y)
+	// cond: config.PtrSize == 4
+	// result: (I64Eq (ZeroExt32to64 x) (ZeroExt32to64 y))
+	for {
+		x := v_0
+		y := v_1
+		if !(config.PtrSize == 4) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Eq)
+		v0 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v0.AddArg(x)
+		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v1.AddArg(y)
+		v.AddArg2(v0, v1)
+		return true
+	}
+	// match: (EqPtr x y)
+	// result: (I64Eq x y)
+	for {
+		x := v_0
+		y := v_1
+		v.Reset(ssaop.OpWasmI64Eq)
+		v.AddArg2(x, y)
+		return true
+	}
+}
 func rewriteValue_OpHmul64(v *ssa.Value) bool {
 	v_1 := v.Args[1]
 	v_0 := v.Args[0]
@@ -2075,10 +2098,60 @@ func rewriteValue_OpHmul64u(v *ssa.Value) bool {
 		return true
 	}
 }
+func rewriteValue_OpIsInBounds(v *ssa.Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (IsInBounds idx len)
+	// cond: config.PtrSize == 4
+	// result: (I64LtU (ZeroExt32to64 idx) (ZeroExt32to64 len))
+	for {
+		idx := v_0
+		len := v_1
+		if !(config.PtrSize == 4) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64LtU)
+		v0 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v0.AddArg(idx)
+		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v1.AddArg(len)
+		v.AddArg2(v0, v1)
+		return true
+	}
+	// match: (IsInBounds idx len)
+	// result: (I64LtU idx len)
+	for {
+		idx := v_0
+		len := v_1
+		v.Reset(ssaop.OpWasmI64LtU)
+		v.AddArg2(idx, len)
+		return true
+	}
+}
 func rewriteValue_OpIsNonNil(v *ssa.Value) bool {
 	v_0 := v.Args[0]
 	b := v.Block
+	config := b.Func.Config
 	typ := &b.Func.Config.Types
+	// match: (IsNonNil p)
+	// cond: config.PtrSize == 4
+	// result: (I64Eqz (I64Eqz (ZeroExt32to64 p)))
+	for {
+		p := v_0
+		if !(config.PtrSize == 4) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Eqz)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Eqz, typ.Bool)
+		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v1.AddArg(p)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		return true
+	}
 	// match: (IsNonNil p)
 	// result: (I64Eqz (I64Eqz p))
 	for {
@@ -2087,6 +2160,39 @@ func rewriteValue_OpIsNonNil(v *ssa.Value) bool {
 		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Eqz, typ.Bool)
 		v0.AddArg(p)
 		v.AddArg(v0)
+		return true
+	}
+}
+func rewriteValue_OpIsSliceInBounds(v *ssa.Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (IsSliceInBounds idx len)
+	// cond: config.PtrSize == 4
+	// result: (I64LeU (ZeroExt32to64 idx) (ZeroExt32to64 len))
+	for {
+		idx := v_0
+		len := v_1
+		if !(config.PtrSize == 4) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64LeU)
+		v0 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v0.AddArg(idx)
+		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v1.AddArg(len)
+		v.AddArg2(v0, v1)
+		return true
+	}
+	// match: (IsSliceInBounds idx len)
+	// result: (I64LeU idx len)
+	for {
+		idx := v_0
+		len := v_1
+		v.Reset(ssaop.OpWasmI64LeU)
+		v.AddArg2(idx, len)
 		return true
 	}
 }
@@ -3283,6 +3389,39 @@ func rewriteValue_OpNeq8(v *ssa.Value) bool {
 		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt8to64, typ.UInt64)
 		v1.AddArg(y)
 		v.AddArg2(v0, v1)
+		return true
+	}
+}
+func rewriteValue_OpNeqPtr(v *ssa.Value) bool {
+	v_1 := v.Args[1]
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (NeqPtr x y)
+	// cond: config.PtrSize == 4
+	// result: (I64Ne (ZeroExt32to64 x) (ZeroExt32to64 y))
+	for {
+		x := v_0
+		y := v_1
+		if !(config.PtrSize == 4) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Ne)
+		v0 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v0.AddArg(x)
+		v1 := b.NewValue0(v.Pos, ssaop.OpZeroExt32to64, typ.UInt64)
+		v1.AddArg(y)
+		v.AddArg2(v0, v1)
+		return true
+	}
+	// match: (NeqPtr x y)
+	// result: (I64Ne x y)
+	for {
+		x := v_0
+		y := v_1
+		v.Reset(ssaop.OpWasmI64Ne)
+		v.AddArg2(x, y)
 		return true
 	}
 }
@@ -5744,6 +5883,246 @@ func rewriteValue_OpStore(v *ssa.Value) bool {
 	}
 	return false
 }
+func rewriteValue_OpTrunc16to8(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc16to8 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend8S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend8S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc16to8 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc16to8 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
+func rewriteValue_OpTrunc32to16(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc32to16 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend16S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend16S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc32to16 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xffff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xffff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc32to16 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
+func rewriteValue_OpTrunc32to8(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc32to8 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend8S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend8S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc32to8 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc32to8 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
+func rewriteValue_OpTrunc64to16(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc64to16 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend16S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend16S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc64to16 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xffff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xffff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc64to16 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
+func rewriteValue_OpTrunc64to32(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc64to32 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend32S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend32S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc64to32 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xffffffff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xffffffff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc64to32 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
+func rewriteValue_OpTrunc64to8(v *ssa.Value) bool {
+	v_0 := v.Args[0]
+	b := v.Block
+	config := b.Func.Config
+	typ := &b.Func.Config.Types
+	// match: (Trunc64to8 x)
+	// cond: config.PtrSize == 4 && v.Type.IsSigned()
+	// result: (I64Extend8S x)
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64Extend8S)
+		v.AddArg(x)
+		return true
+	}
+	// match: (Trunc64to8 x)
+	// cond: config.PtrSize == 4 && !v.Type.IsSigned()
+	// result: (I64And x (I64Const [0xff]))
+	for {
+		x := v_0
+		if !(config.PtrSize == 4 && !v.Type.IsSigned()) {
+			break
+		}
+		v.Reset(ssaop.OpWasmI64And)
+		v0 := b.NewValue0(v.Pos, ssaop.OpWasmI64Const, typ.Int64)
+		v0.AuxInt = ssa.Int64ToAuxInt(0xff)
+		v.AddArg2(x, v0)
+		return true
+	}
+	// match: (Trunc64to8 x)
+	// result: (Copy x)
+	for {
+		x := v_0
+		v.Reset(ssaop.OpCopy)
+		v.AddArg(x)
+		return true
+	}
+}
 func rewriteValue_OpWasmF32DemoteF64(v *ssa.Value) bool {
 	v_0 := v.Args[0]
 	// match: (F32DemoteF64 (F64Sqrt (F64PromoteF32 x)))
@@ -6112,6 +6491,36 @@ func rewriteValue_OpWasmI64And(v *ssa.Value) bool {
 		v.AddArg2(x, v0)
 		return true
 	}
+	// match: (I64And x:(I64Load32U _ _) (I64Const [0xffffffff]))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load32U || v_1.Op != ssaop.OpWasmI64Const || ssa.AuxIntToInt64(v_1.AuxInt) != 0xffffffff {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64And x:(I64Load16U _ _) (I64Const [0xffff]))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load16U || v_1.Op != ssaop.OpWasmI64Const || ssa.AuxIntToInt64(v_1.AuxInt) != 0xffff {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64And x:(I64Load8U _ _) (I64Const [0xff]))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load8U || v_1.Op != ssaop.OpWasmI64Const || ssa.AuxIntToInt64(v_1.AuxInt) != 0xff {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
 	// match: (I64And (I64Const [x]) y)
 	// cond: y.Op != ssaop.OpWasmI64Const
 	// result: (I64And y (I64Const [x]))
@@ -6269,6 +6678,42 @@ func rewriteValue_OpWasmI64Extend16S(v *ssa.Value) bool {
 		v.CopyOf(x)
 		return true
 	}
+	// match: (I64Extend16S x:(I64Load16S _ _))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load16S {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend16S x:(Arg <t>))
+	// cond: t.Size() == 2 && t.IsSigned()
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpArg {
+			break
+		}
+		t := x.Type
+		if !(t.Size() == 2 && t.IsSigned()) {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend16S (I64Const [c]))
+	// result: (I64Const [int64(int16(c))])
+	for {
+		if v_0.Op != ssaop.OpWasmI64Const {
+			break
+		}
+		c := ssa.AuxIntToInt64(v_0.AuxInt)
+		v.Reset(ssaop.OpWasmI64Const)
+		v.AuxInt = ssa.Int64ToAuxInt(int64(int16(c)))
+		return true
+	}
 	return false
 }
 func rewriteValue_OpWasmI64Extend32S(v *ssa.Value) bool {
@@ -6326,6 +6771,42 @@ func rewriteValue_OpWasmI64Extend32S(v *ssa.Value) bool {
 		v.CopyOf(x)
 		return true
 	}
+	// match: (I64Extend32S x:(I64Load32S _ _))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load32S {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend32S x:(Arg <t>))
+	// cond: t.Size() == 4 && t.IsSigned()
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpArg {
+			break
+		}
+		t := x.Type
+		if !(t.Size() == 4 && t.IsSigned()) {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend32S (I64Const [c]))
+	// result: (I64Const [int64(int32(c))])
+	for {
+		if v_0.Op != ssaop.OpWasmI64Const {
+			break
+		}
+		c := ssa.AuxIntToInt64(v_0.AuxInt)
+		v.Reset(ssaop.OpWasmI64Const)
+		v.AuxInt = ssa.Int64ToAuxInt(int64(int32(c)))
+		return true
+	}
 	return false
 }
 func rewriteValue_OpWasmI64Extend8S(v *ssa.Value) bool {
@@ -6359,6 +6840,42 @@ func rewriteValue_OpWasmI64Extend8S(v *ssa.Value) bool {
 			break
 		}
 		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend8S x:(I64Load8S _ _))
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpWasmI64Load8S {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend8S x:(Arg <t>))
+	// cond: t.Size() == 1 && t.IsSigned()
+	// result: x
+	for {
+		x := v_0
+		if x.Op != ssaop.OpArg {
+			break
+		}
+		t := x.Type
+		if !(t.Size() == 1 && t.IsSigned()) {
+			break
+		}
+		v.CopyOf(x)
+		return true
+	}
+	// match: (I64Extend8S (I64Const [c]))
+	// result: (I64Const [int64(int8(c))])
+	for {
+		if v_0.Op != ssaop.OpWasmI64Const {
+			break
+		}
+		c := ssa.AuxIntToInt64(v_0.AuxInt)
+		v.Reset(ssaop.OpWasmI64Const)
+		v.AuxInt = ssa.Int64ToAuxInt(int64(int8(c)))
 		return true
 	}
 	return false

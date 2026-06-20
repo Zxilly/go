@@ -16,6 +16,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/obj/wasm"
+	"internal/buildcfg"
 )
 
 /*
@@ -133,7 +134,11 @@ import (
 */
 
 func Init(arch *ssagen.ArchInfo) {
-	arch.LinkArch = &wasm.Linkwasm
+	if buildcfg.GOARCH == "wasm32" {
+		arch.LinkArch = &wasm.Linkwasm32
+	} else {
+		arch.LinkArch = &wasm.Linkwasm
+	}
 	arch.REGSP = wasm.REG_SP
 	arch.MAXWIDTH = 1 << 50
 
@@ -149,14 +154,20 @@ func zeroRange(pp *objw.Progs, p *obj.Prog, off, cnt int64, state *uint32) *obj.
 	if cnt == 0 {
 		return p
 	}
-	if cnt%8 != 0 {
+	if cnt%int64(types.PtrSize) != 0 {
 		base.Fatalf("zerorange count not a multiple of widthptr %d", cnt)
 	}
 
-	for i := int64(0); i < cnt; i += 8 {
+	i := int64(0)
+	for ; i+8 <= cnt; i += 8 {
 		p = pp.Append(p, wasm.AGet, obj.TYPE_REG, wasm.REG_SP, 0, 0, 0, 0)
 		p = pp.Append(p, wasm.AI64Const, obj.TYPE_CONST, 0, 0, 0, 0, 0)
 		p = pp.Append(p, wasm.AI64Store, 0, 0, 0, obj.TYPE_CONST, 0, off+i)
+	}
+	for ; i < cnt; i += 4 {
+		p = pp.Append(p, wasm.AGet, obj.TYPE_REG, wasm.REG_SP, 0, 0, 0, 0)
+		p = pp.Append(p, wasm.AI32Const, obj.TYPE_CONST, 0, 0, 0, 0, 0)
+		p = pp.Append(p, wasm.AI32Store, 0, 0, 0, obj.TYPE_CONST, 0, off+i)
 	}
 
 	return p
@@ -264,8 +275,13 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		s.Prog(wasm.AMemoryFill)
 
 	case ssaop.OpWasmLoweredNilCheck:
-		getValue64(s, v.Args[0])
-		s.Prog(wasm.AI64Eqz)
+		if buildcfg.GOARCH == "wasm32" {
+			getValue32(s, v.Args[0])
+			s.Prog(wasm.AI32Eqz)
+		} else {
+			getValue64(s, v.Args[0])
+			s.Prog(wasm.AI64Eqz)
+		}
 		s.Prog(wasm.AIf)
 		p := s.Prog(wasm.ACALLNORESUME)
 		p.To = obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: ir.Syms.SigPanic}
