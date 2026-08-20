@@ -16,6 +16,7 @@ import (
 	"cmd/internal/src"
 	"encoding/json"
 	"fmt"
+	"internal/buildcfg"
 	"os"
 	"strings"
 )
@@ -605,6 +606,9 @@ func rewriteFunctionCall(call *ir.CallExpr, curfn, callee *ir.Func) ir.Node {
 
 	fnPC := ir.FuncPC(pos, fnIface, obj.ABIInternal)
 	concretePC := ir.FuncPC(pos, calleeIface, obj.ABIInternal)
+	if buildcfg.GOARCH == "wasm32" {
+		fnPC = typecheck.Call(pos, typecheck.LookupRuntime("wasmFuncPC"), ir.Nodes{fnPC}, false)
+	}
 
 	pcEq := typecheck.Expr(ir.NewBinaryExpr(base.Pos, ir.OEQ, fnPC, concretePC))
 

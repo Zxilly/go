@@ -40,7 +40,7 @@ TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
 	CALL	runtime·mstart0(SB)
 	RET // not reached
 
-DATA  runtime·mainPC+0(SB)/4,$runtime·main(SB)
+FUNCPTR runtime·mainPC(SB), $runtime·main(SB)
 GLOBL runtime·mainPC(SB),RODATA,$4
 
 TEXT runtime·gogo(SB), NOSPLIT, $0-8
@@ -50,16 +50,27 @@ TEXT runtime·gogo(SB), NOSPLIT, $0-8
 	MOVD R1, g
 	MOVW gobuf_sp(R0), SP
 
-	// Put target PC at -8(SP), wasm_pc_f_loop will pick it up
+	// Put the logical PC and PC_F at -8(SP); wasm_pc_f_loop will pick them up.
 	Get SP
 	I32Const $8
 	I32Sub
-	I64Load32U gobuf_pc(R0)
-	I64Store $0
+	Get R0
+	I32WrapI64
+	I32Load $gobuf_pc
+	I32Store $0
+
+	Get SP
+	I32Const $8
+	I32Sub
+	Get R0
+	I32WrapI64
+	I32Load $gobuf_lr
+	I32Store $4
 
 	MOVW gobuf_ctxt(R0), CTXT
 	// clear to help garbage collector
 	MOVW $0, gobuf_sp(R0)
+	MOVW $0, gobuf_lr(R0)
 	MOVW $0, gobuf_ctxt(R0)
 
 	I32Const $1
@@ -79,6 +90,7 @@ TEXT runtime·mcall(SB), NOSPLIT, $0-8
 
 	// save state in g->sched
 	MOVW 0(SP), g_sched+gobuf_pc(g)     // caller's PC
+	MOVW 4(SP), g_sched+gobuf_lr(g)     // caller's PC_F
 	MOVW $fn+0(FP), g_sched+gobuf_sp(g) // caller's SP
 
 	// if g == g0 call badmcall
@@ -152,6 +164,11 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	// save state in g->sched. Pretend to
 	// be systemstack_switch if the G stack is scanned.
 	MOVW $runtime·systemstack_switch(SB), g_sched+gobuf_pc(g)
+	I32Const $runtime·wasmSystemstackSwitchF(SB)
+	I32Load $0
+	I64ExtendI32U
+	Set R3
+	MOVW R3, g_sched+gobuf_lr(g)
 
 	MOVW SP, g_sched+gobuf_sp(g)
 
@@ -164,7 +181,12 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	I64Sub
 	Set R3
 
-	MOVD $runtime·mstart(SB), 0(R3)
+	MOVW $runtime·mstart(SB), 0(R3)
+	I32Const $runtime·wasmMstartF(SB)
+	I32Load $0
+	I64ExtendI32U
+	Set R4
+	MOVW R4, 4(R3)
 	MOVD R3, SP
 
 	// call fn
@@ -245,6 +267,7 @@ TEXT runtime·morestack(SB), NOSPLIT, $0-0
 	// Set g->sched to context in f.
 	NOP	SP	// tell vet SP changed - stop checking offsets
 	MOVW 0(SP), g_sched+gobuf_pc(g)
+	MOVW 4(SP), g_sched+gobuf_lr(g)
 	MOVW $8(SP), g_sched+gobuf_sp(g) // f's SP
 	MOVW CTXT, g_sched+gobuf_ctxt(g)
 
@@ -269,6 +292,7 @@ TEXT runtime·morestack(SB), NOSPLIT, $0-0
 	// Called from f.
 	// Set m->morebuf to f's caller.
 	MOVW 8(SP), m_morebuf+gobuf_pc(R1)
+	MOVW 12(SP), m_morebuf+gobuf_lr(R1)
 	MOVW $16(SP), m_morebuf+gobuf_sp(R1) // f's caller's SP
 	MOVW g, m_morebuf+gobuf_g(R1)
 
@@ -521,6 +545,32 @@ TEXT runtime·gcWriteBarrier8<ABIInternal>(SB),NOSPLIT,$0
 	Call	gcWriteBarrier<>(SB)
 	Return
 
+// func wasmFuncEntryAddr() uintptr
+TEXT runtime·wasmFuncEntryAddr(SB), NOSPLIT, $0-4
+	I32Const $runtime·wasmFuncEntry(SB)
+	I64ExtendI32U
+	Set R0
+	MOVW R0, ret+0(FP)
+	RET
+
+// func wasmFuncCount() uintptr
+TEXT runtime·wasmFuncCount(SB), NOSPLIT, $0-4
+	I32Const $runtime·wasmFuncCountData(SB)
+	I32Load $0
+	I64ExtendI32U
+	Set R0
+	MOVW R0, ret+0(FP)
+	RET
+
+// func wasmGoexitHandle() uintptr
+TEXT runtime·wasmGoexitHandle(SB), NOSPLIT, $0-4
+	I32Const $runtime·wasmGoexitF(SB)
+	I32Load $0
+	I64ExtendI32U
+	Set R0
+	MOVW R0, ret+0(FP)
+	RET
+
 TEXT wasm_pc_f_loop(SB),NOSPLIT,$0
 // Call the function for the current PC_F. Repeat until PAUSE != 0 indicates pause or exit.
 // The WebAssembly stack may unwind, e.g. when switching goroutines.
@@ -532,17 +582,27 @@ TEXT wasm_pc_f_loop(SB),NOSPLIT,$0
 	If
 	loop:
 		Loop
-			// Get PC_B & PC_F from -8(SP)
+			// Get PC_F from -8(SP).
 			Get SP
 			I32Const $8
 			I32Sub
-			I32Load16U $0 // PC_B
+			I32Load $4
+			Set R0
 
+			// PC_B = logical PC - function entry PC.
 			Get SP
 			I32Const $8
 			I32Sub
-			I32Load $2 // PC_F
+			I32Load $0 // logical PC
+			I32Const $runtime·wasmFuncEntry(SB)
+			Get R0
+			I32Const $2
+			I32Shl
+			I32Add
+			I32Load $0
+			I32Sub
 
+			Get R0 // PC_F
 			CallIndirect $0
 			Drop
 
@@ -558,8 +618,8 @@ TEXT wasm_pc_f_loop(SB),NOSPLIT,$0
 	Return
 
 // wasm_pc_f_loop_export is like wasm_pc_f_loop, except that this takes an
-// argument (on Wasm stack) that is a PC_F, and the loop stops when we get
-// to that PC in a normal return (not unwinding).
+// argument (on Wasm stack) that is a logical PC token, and the loop stops
+// when we get to that continuation in a normal return (not unwinding).
 // This is for handling an wasmexport function when it needs to switch the
 // stack.
 TEXT wasm_pc_f_loop_export(SB),NOSPLIT,$0
@@ -573,16 +633,16 @@ outer:
 		Set R1
 	loop:
 		Loop
-			// Get PC_F & PC_B from -8(SP)
+			// Get logical PC and PC_F from -8(SP)
 			Get SP
 			I32Const $8
 			I32Sub
-			I32Load $2 // PC_F
+			I32Load $0 // logical PC
 			Tee R2
 
 			Get R0
 			I32Eq
-			If // PC_F == R0, we're at the stop PC
+			If // logical PC == R0, we're at the stop continuation
 				Get R1
 				I32Eqz
 				// Break if it is a normal return
@@ -592,9 +652,20 @@ outer:
 			Get SP
 			I32Const $8
 			I32Sub
-			I32Load16U $0 // PC_B
+			I32Load $4 // PC_F
+			Set R3
 
-			Get R2 // PC_F
+			// PC_B = logical PC - function entry PC.
+			Get R2
+			I32Const $runtime·wasmFuncEntry(SB)
+			Get R3
+			I32Const $2
+			I32Shl
+			I32Add
+			I32Load $0
+			I32Sub
+
+			Get R3 // PC_F
 			CallIndirect $0
 			Set R1 // save return/unwinding state for next iteration
 

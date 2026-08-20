@@ -67,9 +67,9 @@ func main() {
 	case "s390x":
 		arch, theArch = s390x.Init()
 	case "wasm":
-		arch, theArch = wasm.Init(true)
+		arch, theArch = wasm.Init(sys.ArchWasm)
 	case "wasm32":
-		arch, theArch = wasm.Init(false)
+		arch, theArch = wasm.Init(sys.ArchWasm32)
 	}
 	ld.Main(arch, theArch)
 }

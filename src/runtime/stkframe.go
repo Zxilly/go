@@ -135,7 +135,7 @@ func (frame *stkframe) argMapInternal() (argMap bitvector, hasReflectStackObj bo
 		// Reflect will update this value after it copies
 		// in the return values.
 		retValid := *(*bool)(unsafe.Pointer(arg0 + 4*goarch.PtrSize))
-		if mv.fn != f.entry() {
+		if funcHandleToPC(mv.fn) != f.entry() {
 			print("runtime: confused by ", funcname(f), "\n")
 			throw("reflect mismatch")
 		}

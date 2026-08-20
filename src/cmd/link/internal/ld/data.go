@@ -350,6 +350,21 @@ func (st *relocSymState) relocsym(s loader.Sym, P []byte) {
 			} else {
 				log.Fatalf("cannot handle R_TLS_IE (sym %s) when linking internally", ldr.SymName(s))
 			}
+		case objabi.R_WASMFCALL:
+			if weak && !ldr.AttrReachable(rs) {
+				rs = syms.unreachableMethod
+			}
+			if target.Arch.PtrSize != 4 || !target.IsWasm() {
+				st.err.Errorf(s, "R_WASMFCALL used on non-wasm32 target")
+				continue
+			}
+			handle, ok := st.wasmFuncIndex[rs]
+			if !ok {
+				st.err.Errorf(s, "R_WASMFCALL target is not a defined WebAssembly function: %s", ldr.SymName(rs))
+				continue
+			}
+			o = int64(handle)
+
 		case objabi.R_ADDR, objabi.R_PEIMAGEOFF:
 			if weak && !ldr.AttrReachable(rs) {
 				// Redirect it to runtime.unreachableMethod, which will throw if called.
@@ -496,8 +511,8 @@ func (st *relocSymState) relocsym(s loader.Sym, P []byte) {
 			// to the start of the first text section, even if there are multiple.
 			if sect.Name == ".text" {
 				o = ldr.SymValue(rs) - int64(Segtext.Sections[0].Vaddr) + r.Add()
-				if target.IsWasm() {
-					// On Wasm, textoff (e.g. in the method table) is just the function index,
+				if target.IsWasm() && target.Arch.PtrSize == 8 {
+					// On GOARCH=wasm, textoff (e.g. in the method table) is just the function index,
 					// whereas the "PC" (rs's Value), relative to section start, is
 					// function index << 16 + block index (see ../wasm/asm.go:assignAddress).
 					if o&(1<<16-1) != 0 {
@@ -734,7 +749,7 @@ func extreloc(ctxt *Link, ldr *loader.Loader, s loader.Sym, r loader.Reloc) (loa
 		return ExtrelocSimple(ldr, r), true
 
 	// These reloc types don't need external relocations.
-	case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_ADDRCUOFF,
+	case objabi.R_ADDROFF, objabi.R_METHODOFF, objabi.R_ADDRCUOFF, objabi.R_WASMFCALL,
 		objabi.R_SIZE, objabi.R_CONST, objabi.R_GOTOFF,
 		objabi.R_DWTXTADDR_U1, objabi.R_DWTXTADDR_U2,
 		objabi.R_DWTXTADDR_U3, objabi.R_DWTXTADDR_U4:
@@ -781,10 +796,11 @@ func ExtrelocViaOuterSym(ldr *loader.Loader, r loader.Reloc, s loader.Sym) loade
 // to relocsym happen in parallel; the assumption is that each
 // parallel thread will have its own state object.
 type relocSymState struct {
-	target *Target
-	ldr    *loader.Loader
-	err    *ErrorReporter
-	syms   *ArchSyms
+	target        *Target
+	ldr           *loader.Loader
+	err           *ErrorReporter
+	syms          *ArchSyms
+	wasmFuncIndex map[loader.Sym]uint32
 }
 
 // makeRelocSymState creates a relocSymState container object to
@@ -792,10 +808,11 @@ type relocSymState struct {
 // each parallel thread should have its own state object.
 func (ctxt *Link) makeRelocSymState() *relocSymState {
 	return &relocSymState{
-		target: &ctxt.Target,
-		ldr:    ctxt.loader,
-		err:    &ctxt.ErrorReporter,
-		syms:   &ctxt.ArchSyms,
+		target:        &ctxt.Target,
+		ldr:           ctxt.loader,
+		err:           &ctxt.ErrorReporter,
+		syms:          &ctxt.ArchSyms,
+		wasmFuncIndex: ctxt.WasmFuncIndex,
 	}
 }
 
@@ -2706,6 +2723,9 @@ func (ctxt *Link) textaddress() {
 	sort.SliceStable(ctxt.Textp, func(i, j int) bool {
 		return ldr.SymType(ctxt.Textp[i]) < ldr.SymType(ctxt.Textp[j])
 	})
+	if thearch.PrepareText != nil {
+		thearch.PrepareText(ctxt, ldr)
+	}
 
 	text := ctxt.xdefine("runtime.text", sym.STEXT, 0)
 	etext := ctxt.xdefine("runtime.etext", sym.STEXTEND, 0)
@@ -2987,11 +3007,11 @@ func splitTextSections(ctxt *Link) bool {
 	return (ctxt.IsARM() || ctxt.IsPPC64() || (ctxt.IsARM64() && ctxt.IsDarwin())) && ctxt.IsExternal()
 }
 
-// On Wasm, we reserve 4096 bytes for zero page, then 8192 bytes for wasm_exec.js
+// WasmMinDataAddr leaves 4096 bytes for the zero page and 8192 bytes for wasm_exec.js
 // to store command line args and environment variables.
-// Data sections starts from at least address 12288.
+// Data sections start from at least address 12288.
 // Keep in sync with wasm_exec.js.
-const wasmMinDataAddr = 4096 + 8192
+const WasmMinDataAddr = 4096 + 8192
 
 // address assigns virtual addresses to all segments and sections and
 // returns all segments in file order.
@@ -3007,12 +3027,17 @@ func (ctxt *Link) address() []*sym.Segment {
 		s.Vaddr = va
 		va += s.Length
 		if ctxt.IsWasm() && i == 0 {
-			// On Wasm, functions are not in the linear memory.
-			// Start the data address at wasmMinDataAddr.
+			// On GOARCH=wasm, functions are not in linear memory, so reset the
+			// data address. wasm32 assigns dense logical PC tokens starting
+			// here, so place data after the token range instead.
 			// (The second and later sections in Segtext are
 			// actually rodata. Probably we should put them in
 			// Segrodata.)
-			va = wasmMinDataAddr
+			if ctxt.Arch.PtrSize == 8 {
+				va = WasmMinDataAddr
+			} else if va < WasmMinDataAddr {
+				va = WasmMinDataAddr
+			}
 		}
 	}
 	Segtext.Length = va - uint64(*FlagTextAddr)

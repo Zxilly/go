@@ -288,7 +288,7 @@ func WriteFuncSyms() {
 		if target.ABI() != obj.ABIInternal {
 			base.Fatalf("expected ABIInternal: %v has %v", target, target.ABI())
 		}
-		objw.SymPtr(sf, 0, target, 0)
+		objw.SymFuncPtr(sf, 0, target)
 		objw.Global(sf, int32(types.PtrSize), obj.DUPOK|obj.RODATA)
 	}
 }

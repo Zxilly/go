@@ -96,6 +96,10 @@ type Link struct {
 	Textp        []loader.Sym
 	Moduledata   loader.Sym
 
+	// WasmFuncIndex maps reachable WebAssembly functions to their non-zero
+	// call_indirect table handles. It is populated by the Wasm backend.
+	WasmFuncIndex map[loader.Sym]uint32
+
 	moduledataTypeDescOffset int64
 	moduledataItabOffset     int64
 	moduledataItabSizeOffset int64
