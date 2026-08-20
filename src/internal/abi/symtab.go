@@ -141,3 +141,7 @@ const (
 const MINFUNC = 16 // minimum size for a function
 
 const FuncTabBucketSize = 256 * MINFUNC // size of bucket in the pc->func lookup table
+
+// FuncTabBucketSizeWasm32 is measured in dense logical PC tokens rather than
+// instruction bytes. It keeps each bucket within the uint8 subbucket index.
+const FuncTabBucketSizeWasm32 = 256

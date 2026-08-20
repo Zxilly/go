@@ -339,7 +339,8 @@ simple name <code>profileloop</code>.
 
 <p>
 Global data symbols are defined by a sequence of initializing
-<code>DATA</code> directives followed by a <code>GLOBL</code> directive.
+<code>DATA</code> or <code>FUNCPTR</code> directives followed by a
+<code>GLOBL</code> directive.
 Each <code>DATA</code> directive initializes a section of the
 corresponding memory.
 The memory not explicitly initialized is zeroed.
@@ -355,11 +356,25 @@ The <code>DATA</code> directives for a given symbol must be written with increas
 </p>
 
 <p>
+To initialize the code word of a function value, use the pointer-sized
+<code>FUNCPTR</code> directive:
+</p>
+
+<pre>
+FUNCPTR symbol+offset(SB), $function(SB)
+</pre>
+
+<p>
+The explicit directive is required on architectures where a callable function
+reference has a different representation from a text address.
+</p>
+
+<p>
 The <code>GLOBL</code> directive declares a symbol to be global.
 The arguments are optional flags and the size of the data being declared as a global,
 which will have initial value all zeros unless a <code>DATA</code> directive
 has initialized it.
-The <code>GLOBL</code> directive must follow any corresponding <code>DATA</code> directives.
+The <code>GLOBL</code> directive must follow any corresponding initialization directives.
 </p>
 
 <p>

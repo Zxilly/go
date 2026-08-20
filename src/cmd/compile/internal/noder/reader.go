@@ -1537,7 +1537,7 @@ func (pr *pkgReader) dictNameOf(dict *readerDict) *ir.Name {
 		rsym := method.FuncName().Linksym()
 		assert(rsym.ABI() == obj.ABIInternal) // must be ABIInternal; see ir.OCFUNC in ssagen/ssa.go
 
-		ot = objw.SymPtr(lsym, ot, rsym, 0)
+		ot = objw.SymFuncPtr(lsym, ot, rsym)
 	}
 
 	assertOffset("subdictionaries", dict.subdictsOffset())

@@ -609,7 +609,7 @@ func badmorestackg0() {
 	switchToCrashStack(func() {
 		print("runtime: morestack on g0, stack [", hex(g.stack.lo), " ", hex(g.stack.hi), "], sp=", hex(g.sched.sp), ", called from\n")
 		g.m.traceback = 2 // include pc and sp in stack trace
-		traceback1(g.sched.pc, g.sched.sp, g.sched.lr, g, 0)
+		traceback1(g.sched.pc, g.sched.sp, gobufTracebackLR(&g.sched), g, 0)
 		print("\n")
 
 		throw("morestack on g0")
@@ -1928,7 +1928,13 @@ func mstart1() {
 	// And goexit0 does a gogo that needs to return from mstart1
 	// and let mstart0 exit the thread.
 	gp.sched.g = guintptr(unsafe.Pointer(gp))
-	gp.sched.pc = sys.GetCallerPC()
+	pc := sys.GetCallerPC()
+	if goarch.IsWasm32 != 0 {
+		gobufSetPC(&gp.sched, pc)
+	} else {
+		// Some link-register architectures initialize sched.lr before this.
+		gp.sched.pc = pc
+	}
 	gp.sched.sp = sys.GetCallerSP()
 	gp.sched.bp = getcallerfp()
 
@@ -2529,10 +2535,9 @@ func oneNewExtraM() {
 	// the goroutine stack ends.
 	mp := allocm(nil, nil, -1)
 	gp := malg(4096)
-	gp.sched.pc = abi.FuncPCABI0(goexit) + sys.PCQuantum
+	gobufSetPCWithHandle(&gp.sched, abi.FuncPCABI0(goexit)+sys.PCQuantum, wasmGoexitHandle())
 	gp.sched.sp = gp.stack.hi
 	gp.sched.sp -= 4 * goarch.PtrSize // extra space in case of reads slightly beyond frame
-	gp.sched.lr = 0
 	gp.sched.g = guintptr(unsafe.Pointer(gp))
 	gp.syscallpc = gp.sched.pc
 	gp.syscallsp = gp.sched.sp
@@ -4604,9 +4609,8 @@ func save(pc, sp, bp uintptr) {
 		throw("save on system g not allowed")
 	}
 
-	gp.sched.pc = pc
+	gobufSetPC(&gp.sched, pc)
 	gp.sched.sp = sp
-	gp.sched.lr = 0
 	gp.sched.bp = bp
 	// We need to ensure ctxt is zero, but can't have a write
 	// barrier here. However, it should always already be zero.
@@ -5387,13 +5391,13 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 	memclrNoHeapPointers(unsafe.Pointer(&newg.sched), unsafe.Sizeof(newg.sched))
 	newg.sched.sp = sp
 	newg.stktopsp = sp
-	newg.sched.pc = abi.FuncPCABI0(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
+	gobufSetPCWithHandle(&newg.sched, abi.FuncPCABI0(goexit)+sys.PCQuantum, wasmGoexitHandle()) // +PCQuantum so that previous instruction is in same function
 	newg.sched.g = guintptr(unsafe.Pointer(newg))
 	gostartcallfn(&newg.sched, fn)
 	newg.parentGoid = callergp.goid
 	newg.gopc = callerpc
 	newg.ancestors = saveAncestors(callergp)
-	newg.startpc = fn.fn
+	newg.startpc = funcHandleToPC(fn.fn)
 	newg.runningCleanups.Store(false)
 	if isSystemGoroutine(newg, false) {
 		sched.ngsys.Add(1)

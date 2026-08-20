@@ -29,9 +29,10 @@ func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {
 	sp := buf.sp
 	// The wasm PC slot is always 8 bytes wide, independent of PtrSize.
 	sp -= 8
-	*(*uint64)(unsafe.Pointer(sp)) = uint64(buf.pc) // zeroes the high bytes too
+	*(*uint64)(unsafe.Pointer(sp)) = uint64(buf.pc) | uint64(buf.lr)<<32
 	buf.sp = sp
-	buf.pc = uintptr(fn)
+	buf.lr = uintptr(fn)
+	buf.pc = funcHandleToPC(buf.lr)
 	buf.ctxt = ctxt
 }
 

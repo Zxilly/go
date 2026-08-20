@@ -312,7 +312,11 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				frame.fn = findfunc(frame.pc)
 				f = frame.fn
 				flag = f.flag
-				frame.lr = gp.sched.lr
+				if usesLR {
+					frame.lr = gp.sched.lr
+				} else {
+					frame.lr = 0
+				}
 				frame.sp = gp.sched.sp
 				u.cgoCtxt = len(gp.cgoCtxt) - 1
 			case abi.FuncID_systemstack:

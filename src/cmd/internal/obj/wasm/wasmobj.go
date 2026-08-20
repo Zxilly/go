@@ -164,6 +164,18 @@ const (
 	WasmImport = 1 << 0
 )
 
+type wasmPCRelocMarker struct{}
+
+func wasmPCAddr(s *obj.LSym, offset int64) obj.Addr {
+	return obj.Addr{
+		Type:   obj.TYPE_ADDR,
+		Name:   obj.NAME_EXTERN,
+		Sym:    s,
+		Offset: offset,
+		Val:    wasmPCRelocMarker{},
+	}
+}
+
 const (
 	// This is a special wasm module name that when used as the module name
 	// in //go:wasmimport will cause the generated code to pass the stack pointer
@@ -207,6 +219,15 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			panic("bad args")
 		}
 		return p
+	}
+	appendIndirectIndex := func(p *obj.Prog) *obj.Prog {
+		if ctxt.Arch.PtrSize == 4 {
+			// wasm32 function values contain non-zero call_indirect handles.
+			return appendp(p, AI32WrapI64)
+		}
+		p = appendp(p, AI64Const, constAddr(16))
+		p = appendp(p, AI64ShrU)
+		return appendp(p, AI32WrapI64)
 	}
 
 	framesize := s.Func().Text.To.Offset
@@ -442,13 +463,11 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 			case obj.TYPE_NONE:
 				// (target PC is on stack)
-				p = appendp(p, AI64Const, constAddr(16)) // only needs PC_F bits (16-47), PC_B bits (0-15) are zero
-				p = appendp(p, AI64ShrU)
-				p = appendp(p, AI32WrapI64)
+				p = appendIndirectIndex(p)
 
 				// Set PC_B parameter to function entry.
-				// We need to push this before pushing the target PC_F,
-				// so temporarily pop PC_F, using our REG_PC_B as a
+				// We need to push this before pushing the table index,
+				// so temporarily pop the index, using REG_PC_B as a
 				// scratch register, and push it back after pushing 0.
 				p = appendp(p, ASet, regAddr(REG_PC_B))
 				p = appendp(p, AI32Const, constAddr(0))
@@ -479,12 +498,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 			// write return address to Go stack
 			p = appendp(p, AGet, regAddr(REG_SP))
-			p = appendp(p, AI64Const, obj.Addr{
-				Type:   obj.TYPE_ADDR,
-				Name:   obj.NAME_EXTERN,
-				Sym:    s,           // PC_F
-				Offset: pcAfterCall, // PC_B
-			})
+			p = appendp(p, AI64Const, wasmPCAddr(s, pcAfterCall))
 			p = appendp(p, AI64Store, constAddr(0))
 
 			// low-level WebAssembly call to function
@@ -498,13 +512,11 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 			case obj.TYPE_NONE:
 				// (target PC is on stack)
-				p = appendp(p, AI64Const, constAddr(16)) // only needs PC_F bits (16-47), PC_B bits (0-15) are zero
-				p = appendp(p, AI64ShrU)
-				p = appendp(p, AI32WrapI64)
+				p = appendIndirectIndex(p)
 
 				// Set PC_B parameter to function entry.
-				// We need to push this before pushing the target PC_F,
-				// so temporarily pop PC_F, using our PC_B as a
+				// We need to push this before pushing the table index,
+				// so temporarily pop the index, using PC_B as a
 				// scratch register, and push it back after pushing 0.
 				p = appendp(p, ASet, regAddr(REG_PC_B))
 				p = appendp(p, AI32Const, constAddr(0))
@@ -984,12 +996,7 @@ func genWasmExportWrapper(ctxt *obj.Link, s *obj.LSym, appendp func(p *obj.Prog,
 	p = appendp(p, ASet, regAddr(REG_SP))
 	// write return address to Go stack
 	p = appendp(p, AGet, regAddr(REG_SP))
-	retAddr := obj.Addr{
-		Type:   obj.TYPE_ADDR,
-		Name:   obj.NAME_EXTERN,
-		Sym:    s, // PC_F
-		Offset: 1, // PC_B=1, past the prologue, so we have the right SP delta
-	}
+	retAddr := wasmPCAddr(s, 1) // PC_B=1, past the prologue, so we have the right SP delta
 	if framesize == 0 {
 		// Frameless function, no prologue.
 		retAddr.Offset = 0
@@ -1003,10 +1010,15 @@ func genWasmExportWrapper(ctxt *obj.Link, s *obj.LSym, appendp func(p *obj.Prog,
 	// In the unwinding case, we call wasm_pc_f_loop_export to handle stack switch and rewinding,
 	// until a normal return (non-unwinding) back to this function.
 	p = appendp(p, AIf)
-	p = appendp(p, AI64Const, retAddr)
-	p = appendp(p, AI64Const, constAddr(16))
-	p = appendp(p, AI64ShrU)
-	p = appendp(p, AI32WrapI64)
+	if ctxt.Arch.PtrSize == 4 {
+		// Stop at this exact logical continuation token.
+		p = appendp(p, AI32Const, retAddr)
+	} else {
+		p = appendp(p, AI64Const, retAddr)
+		p = appendp(p, AI64Const, constAddr(16))
+		p = appendp(p, AI64ShrU)
+		p = appendp(p, AI32WrapI64)
+	}
 	p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: wasm_pc_f_loop_export})
 	p = appendp(p, AEnd)
 
@@ -1119,11 +1131,14 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	switch s.Name {
 	case "_rt0_wasm_js", "_rt0_wasm_wasip1", "_rt0_wasm_wasip1_lib",
 		"wasm_export_run", "wasm_export_resume", "wasm_export_getsp",
-		"wasm_pc_f_loop", "runtime.wasmDiv", "runtime.wasmTruncS", "runtime.wasmTruncU", "memeqbody":
+		"runtime.wasmDiv", "runtime.wasmTruncS", "runtime.wasmTruncU", "memeqbody":
 		varDecls = []*varDecl{}
 		useAssemblyRegMap()
+	case "wasm_pc_f_loop":
+		varDecls = []*varDecl{{count: 1, typ: i32}}
+		useAssemblyRegMap()
 	case "wasm_pc_f_loop_export":
-		varDecls = []*varDecl{{count: 2, typ: i32}}
+		varDecls = []*varDecl{{count: 3, typ: i32}}
 		useAssemblyRegMap()
 	case "memchr", "memcmp":
 		varDecls = []*varDecl{{count: 2, typ: i32}}
@@ -1365,10 +1380,18 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 		case AI32Const, AI64Const:
 			if p.From.Name == obj.NAME_EXTERN {
+				size := uint8(8)
+				if p.As == AI32Const {
+					size = 4
+				}
+				typ := objabi.R_ADDR
+				if _, ok := p.From.Val.(wasmPCRelocMarker); ok {
+					typ = objabi.R_WASMPC
+				}
 				s.AddRel(ctxt, obj.Reloc{
-					Type: objabi.R_ADDR,
+					Type: typ,
 					Off:  int32(w.Len()),
-					Siz:  1, // actually variable sized
+					Siz:  size, // encoded as a variable-sized SLEB by the linker
 					Sym:  p.From.Sym,
 					Add:  p.From.Offset,
 				})

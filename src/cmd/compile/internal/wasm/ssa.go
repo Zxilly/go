@@ -50,9 +50,11 @@ import (
    in the function where it might be suspended. Typically these places
    are call sites.
 
-   Sometimes we encode the function ID and block ID separately. When
-   recorded together as a single integer, we use the value 1<<63+F<<16+B.
-   (We also set the highest bit so a PC is distinct from a data address.)
+	Sometimes we encode the function ID and block ID separately. When
+	recorded together as a single integer, wasm uses 1<<63+F<<16+B.
+	wasm32 instead uses a dense 32-bit logical PC token and carries F in
+	the high word of its 8-byte continuation slot. It recovers B by
+	subtracting the function entry PC from the logical PC.
 
    Threads:
 

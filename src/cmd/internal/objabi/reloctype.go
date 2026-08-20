@@ -438,6 +438,14 @@ const (
 	R_DWTXTADDR_U3
 	R_DWTXTADDR_U4
 
+	// R_WASMPC resolves to a WebAssembly continuation. On wasm32 its low
+	// word is a logical PC token and its high word is a function-table handle.
+	R_WASMPC
+
+	// R_WASMFCALL resolves to a wasm32 function-table handle. Unlike a Go
+	// PC, this value is only meaningful as a call_indirect table index.
+	R_WASMFCALL
+
 	// R_WEAK marks the relocation as a weak reference.
 	// A weak relocation does not make the symbol it refers to reachable,
 	// and is only honored by the linker if the symbol is in some other way

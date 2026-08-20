@@ -245,6 +245,7 @@ type Arch struct {
 	Extreloc func(*Target, *loader.Loader, loader.Reloc, loader.Sym) (loader.ExtReloc, bool)
 
 	Gentext        func(*Link, *loader.Loader) // Generate text before addressing has been performed.
+	PrepareText    func(*Link, *loader.Loader) // Finalize arch-specific text metadata after Textp ordering.
 	Machoreloc1    func(*sys.Arch, *OutBuf, *loader.Loader, loader.Sym, loader.ExtReloc, int64) bool
 	MachorelocSize uint32 // size of an Mach-O relocation record, must match Machoreloc1.
 	PEreloc1       func(*sys.Arch, *OutBuf, *loader.Loader, loader.Sym, loader.ExtReloc, int64) bool

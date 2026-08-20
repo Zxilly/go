@@ -52,6 +52,11 @@ func TestErroneous(t *testing.T) {
 		{"DATA", "·E(SB)/4,$·A(SB)", "bad addr size for DATA argument: 4"},
 		{"DATA", "·F(SB)/8,$·A(SB)", ""},
 		{"DATA", "·G(SB)/5,$\"abcde\"", ""},
+		{"FUNCPTR", "", "expect two operands for FUNCPTR"},
+		{"FUNCPTR", "·A(SB)", "expect two operands for FUNCPTR"},
+		{"FUNCPTR", "·A(SB),$0", "FUNCPTR value must be a function address"},
+		{"FUNCPTR", "·A(SB),$·B+1(SB)", "FUNCPTR symbol \"pkg.B\" must not be offset from SB"},
+		{"FUNCPTR", "·H(SB),$·A(SB)", ""},
 		{"GLOBL", "", "expect two or three operands for GLOBL"},
 		{"GLOBL", "0,1", "GLOBL symbol \"<erroneous symbol>\" must be a symbol(SB)"},
 		{"GLOBL", "@B(SB), 0", "expected '(', found B"}, // Issue 23580.

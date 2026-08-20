@@ -311,3 +311,6 @@ func asanregisterglobals(unsafe.Pointer, uintptr)
 
 // used by testing.B.Loop
 func KeepAlive(interface{})
+
+// wasm32 function-handle translation
+func wasmFuncPC(uintptr) uintptr
