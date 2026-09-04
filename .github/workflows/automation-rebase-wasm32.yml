@@ -1,0 +1,93 @@
+name: Temporary rebase feat-wasm32
+
+on:
+  push:
+    branches:
+      - automation/rebase-feat-wasm32-20260904
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/wasm32
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase onto current upstream master
+        id: rebase
+        shell: bash
+        env:
+          EXPECTED_OLD_HEAD: 4df1052ff987f89af26c68db496561231199a72d
+          OLD_MERGE_BASE: c9bdc8d64720b90b5c2c005b8c3c6aac675da266
+        run: |
+          set -u -o pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          actual_old_head=$(git rev-parse HEAD)
+          if [[ "$actual_old_head" != "$EXPECTED_OLD_HEAD" ]]; then
+            echo "feat/wasm32 moved: expected $EXPECTED_OLD_HEAD, got $actual_old_head" >&2
+            exit 2
+          fi
+
+          git remote add upstream https://github.com/golang/go.git
+          git fetch --no-tags upstream master
+          upstream_head=$(git rev-parse upstream/master)
+          echo "upstream_head=$upstream_head" >> "$GITHUB_OUTPUT"
+          echo "Rebasing $EXPECTED_OLD_HEAD onto upstream master $upstream_head"
+
+          if git rebase upstream/master; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+            new_head=$(git rev-parse HEAD)
+            echo "new_head=$new_head" >> "$GITHUB_OUTPUT"
+            git range-diff "$OLD_MERGE_BASE..$EXPECTED_OLD_HEAD" "upstream/master..HEAD" | tee /tmp/range-diff.txt
+            git push --force-with-lease="refs/heads/feat/wasm32:$EXPECTED_OLD_HEAD" origin HEAD:refs/heads/feat/wasm32
+            exit 0
+          fi
+
+          echo "result=conflict" >> "$GITHUB_OUTPUT"
+          mkdir -p /tmp/rebase-conflicts/files
+          git status --porcelain=v2 | tee /tmp/rebase-conflicts/status.txt
+          git diff --name-only --diff-filter=U | tee /tmp/rebase-conflicts/paths.txt
+          git rebase --show-current-patch > /tmp/rebase-conflicts/current.patch || true
+          git diff --cc > /tmp/rebase-conflicts/conflicts.diff || true
+
+          while IFS= read -r path; do
+            [[ -n "$path" ]] || continue
+            safe=$(printf '%s' "$path" | sed 's#/#__#g')
+            mkdir -p "/tmp/rebase-conflicts/files/$safe"
+            git show ":1:$path" > "/tmp/rebase-conflicts/files/$safe/base" 2>/dev/null || true
+            git show ":2:$path" > "/tmp/rebase-conflicts/files/$safe/upstream" 2>/dev/null || true
+            git show ":3:$path" > "/tmp/rebase-conflicts/files/$safe/replayed-commit" 2>/dev/null || true
+            cp -- "$path" "/tmp/rebase-conflicts/files/$safe/with-markers" 2>/dev/null || true
+          done < /tmp/rebase-conflicts/paths.txt
+
+          echo "Rebase stopped at:"
+          git status
+          echo "Current patch:"
+          git rebase --show-current-patch || true
+
+      - name: Upload conflict material
+        if: steps.rebase.outputs.result == 'conflict'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feat-wasm32-rebase-conflicts
+          path: /tmp/rebase-conflicts
+          if-no-files-found: error
+
+      - name: Mark conflict run failed
+        if: steps.rebase.outputs.result == 'conflict'
+        run: exit 1
+
+      - name: Record successful rebase
+        if: steps.rebase.outputs.result == 'success'
+        run: |
+          echo "Rebased onto ${{ steps.rebase.outputs.upstream_head }}"
+          echo "New feature head: ${{ steps.rebase.outputs.new_head }}"
