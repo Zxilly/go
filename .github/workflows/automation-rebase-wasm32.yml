@@ -1,4 +1,4 @@
-name: Temporary rebase and validate feat-wasm32
+name: Temporary diagnose wasm32 after review fixups
 
 on:
   push:
@@ -6,23 +6,22 @@ on:
       - automation/rebase-feat-wasm32-20260904
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: rebase-feat-wasm32-20260904
+  group: diagnose-feat-wasm32-20260904
   cancel-in-progress: false
 
 jobs:
-  rebase-validate-push:
+  diagnose:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Check out feature branch
+      - name: Check out rebased feature branch
         uses: actions/checkout@v4
         with:
           ref: feat/wasm32
-          fetch-depth: 0
-          persist-credentials: true
+          fetch-depth: 1
 
       - name: Install current stable Go bootstrap
         uses: actions/setup-go@v5
@@ -30,220 +29,75 @@ jobs:
           go-version: stable
           check-latest: true
 
-      - name: Rebase, validate host toolchain, and force-push with lease
+      - name: Apply review-only x/sys/cpu fixups and diagnose
         shell: bash
         env:
-          EXPECTED_OLD_HEAD: 4df1052ff987f89af26c68db496561231199a72d
-          OLD_MERGE_BASE: c9bdc8d64720b90b5c2c005b8c3c6aac675da266
-          REVIEW_DIR: /tmp/wasm32-review
+          EXPECTED_HEAD: 104cb8ce40214e711c00ea336cbfc700c93c0283
+          OUT: /tmp/wasm32-diagnostic
         run: |
           set -euo pipefail
-          mkdir -p "$REVIEW_DIR/commits"
-          exec > >(tee "$REVIEW_DIR/workflow.log") 2>&1
+          mkdir -p "$OUT"
+          exec > >(tee "$OUT/workflow.log") 2>&1
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          actual_old_head=$(git rev-parse HEAD)
-          if [[ "$actual_old_head" != "$EXPECTED_OLD_HEAD" ]]; then
-            echo "feat/wasm32 moved: expected $EXPECTED_OLD_HEAD, got $actual_old_head" >&2
-            exit 2
-          fi
-
-          git remote add upstream https://github.com/golang/go.git
-          git fetch --no-tags upstream master
-          upstream_head=$(git rev-parse upstream/master)
-          echo "Rebasing $EXPECTED_OLD_HEAD onto upstream master $upstream_head"
-
-          set +e
-          GIT_EDITOR=true git rebase upstream/master
-          rebase_status=$?
-          set -e
-
-          if (( rebase_status != 0 )); then
-            rebase_head=$(git rev-parse REBASE_HEAD)
-            if [[ "$rebase_head" != "$EXPECTED_OLD_HEAD" ]]; then
-              echo "Unexpected conflicting commit: $rebase_head" >&2
-              git status --short
-              exit 3
-            fi
-
-            mapfile -t conflicts < <(git diff --name-only --diff-filter=U | sort)
-            expected=(
-              "src/simd/archsimd/_gen/midway/intersect_simd_ops.go"
-              "src/simd/archsimd/_gen/wasmgen/main.go"
-            )
-            if [[ "${conflicts[*]}" != "${expected[*]}" ]]; then
-              echo "Unexpected conflict set" >&2
-              printf 'actual:   %s\n' "${conflicts[*]}" >&2
-              printf 'expected: %s\n' "${expected[*]}" >&2
-              exit 4
-            fi
-
-            # During rebase, --ours is the current upstream-based tree. Keep the
-            # upstream gentools refactor and reapply only the wasm32 behavior.
-            git checkout --ours -- "${expected[@]}"
-
-            python3 <<'PY'
+          python3 <<'PY'
           from pathlib import Path
 
-          def replace_exact(path: str, old: str, new: str, expected_count: int = 1) -> None:
-              p = Path(path)
-              text = p.read_text()
-              count = text.count(old)
-              if count != expected_count:
-                  raise SystemExit(
-                      f"{path}: expected {expected_count} occurrence(s), found {count}: {old!r}"
-                  )
-              p.write_text(text.replace(old, new))
+          p = Path('src/vendor/golang.org/x/sys/cpu/cpu_wasm.go')
+          s = p.read_text()
+          assert s.count('//go:build wasm') == 1
+          p.write_text(s.replace('//go:build wasm', '//go:build wasm || wasm32'))
 
-          intersect = "src/simd/archsimd/_gen/midway/intersect_simd_ops.go"
-          replace_exact(
-              intersect,
-              'wasmFiles := []string{"ops_wasm.go", "types_wasm.go", "slicepart_wasm.go",\n\t\t"string.go", "slicepart_128.go", "ops_emulated_wasm.go"}',
-              'wasmFiles := []string{"ops_wasmx.go", "types_wasmx.go", "slicepart_wasmx.go",\n\t\t"string.go", "slicepart_128.go", "ops_emulated_wasmx.go"}',
-          )
-          replace_exact(
-              intersect,
-              "//go:build goexperiment.simd && (amd64 || wasm || arm64)",
-              "//go:build goexperiment.simd && (amd64 || wasm || wasm32 || arm64)",
-          )
-          replace_exact(
-              intersect,
-              "\t\tarch := aaf.arch\n\t\tdoArchWrites := func(w io.Writer) {",
-              "\t\tarch := aaf.arch\n\t\tbuildArch := arch\n\t\tfileArch := arch\n\t\tif arch == \"wasm\" {\n\t\t\tbuildArch = \"(wasm || wasm32)\"\n\t\t\tfileArch = \"wasmx\"\n\t\t}\n\t\tdoArchWrites := func(w io.Writer) {",
-          )
-          replace_exact(
-              intersect,
-              'pf("//go:build goexperiment.simd && %s\\n\\n", arch)',
-              'pf("//go:build goexperiment.simd && %s\\n\\n", buildArch)',
-              2,
-          )
-          replace_exact(
-              intersect,
-              'doArchWrites(files.NewGoFile("simd/internal/bridge/decls_" + arch + ".go"))',
-              'doArchWrites(files.NewGoFile("simd/internal/bridge/decls_" + fileArch + ".go"))',
-          )
-          replace_exact(
-              intersect,
-              'doToFromWrites(files.NewGoFile("simd/tofrom_" + arch + ".go"))',
-              'doToFromWrites(files.NewGoFile("simd/tofrom_" + fileArch + ".go"))',
-          )
+          p = Path('src/vendor/golang.org/x/sys/cpu/endian_little.go')
+          s = p.read_text()
+          old = ' || sh || wasm'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, ' || sh || wasm || wasm32'))
 
-          wasmgen = "src/simd/archsimd/_gen/wasmgen/main.go"
-          replace_exact(wasmgen, "types_wasm.go", "types_wasmx.go", 2)
-          replace_exact(wasmgen, "ops_wasm.go", "ops_wasmx.go", 2)
-          replace_exact(
-              wasmgen,
-              'fmt.Fprintln(f, "//go:build goexperiment.simd && wasm")',
-              'fmt.Fprintln(f, "//go:build goexperiment.simd && (wasm || wasm32)")',
-              2,
-          )
-          replace_exact(
-              wasmgen,
-              '\t\tintrinsics.add(sys.ArchWasm, pkg, fn, builder)\n\t}',
-              '\t\tintrinsics.add(sys.ArchWasm, pkg, fn, builder)\n\t\tintrinsics.add(sys.ArchWasm32, pkg, fn, builder)\n\t}',
-          )
+          p = Path('src/vendor/golang.org/x/sys/cpu/byteorder.go')
+          s = p.read_text()
+          old = '\t\t"sh":\n\t\treturn littleEndian{}'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '\t\t"sh", "wasm", "wasm32":\n\t\treturn littleEndian{}'))
           PY
 
-            gofmt -w "${expected[@]}"
-            git add "${expected[@]}"
-            GIT_EDITOR=true git rebase --continue
-          fi
-
-          if [[ -d .git/rebase-merge || -d .git/rebase-apply ]]; then
-            echo "Rebase state remains unexpectedly" >&2
-            exit 5
-          fi
-          if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
-            echo "Unresolved conflicts remain" >&2
-            exit 6
-          fi
-
-          commit_count=$(git rev-list --count upstream/master..HEAD)
-          if [[ "$commit_count" != "11" ]]; then
-            echo "Expected 11 rebased commits, got $commit_count" >&2
-            exit 7
-          fi
-
-          git diff --check upstream/master...HEAD
-          git range-diff "$OLD_MERGE_BASE..$EXPECTED_OLD_HEAD" "upstream/master..HEAD" \
-            > "$REVIEW_DIR/range-diff.txt"
-
-          # Validate the resolved generator output layout without invoking the
-          # aggregate generator, which additionally requires external ISA data.
-          test ! -e src/simd/archsimd/types_wasm.go
-          test ! -e src/simd/archsimd/ops_wasm.go
-          grep -Fq '//go:build goexperiment.simd && (wasm || wasm32)' src/simd/archsimd/types_wasmx.go
-          grep -Fq '//go:build goexperiment.simd && (wasm || wasm32)' src/simd/archsimd/ops_wasmx.go
-          grep -Fq 'intrinsics.add(sys.ArchWasm32' src/cmd/compile/internal/ssagen/simdWasmintrinsics.go
-
+          git diff -- src/vendor/golang.org/x/sys/cpu | tee "$OUT/review-fix.patch"
           (cd src && ./make.bash)
-          ./bin/go version | tee "$REVIEW_DIR/go-version.txt"
-          ./bin/go tool dist list | tee "$REVIEW_DIR/dist-list.txt"
-          grep -qx 'js/wasm32' "$REVIEW_DIR/dist-list.txt"
-          grep -qx 'wasip1/wasm32' "$REVIEW_DIR/dist-list.txt"
+          ./bin/go version | tee "$OUT/go-version.txt"
 
-          ./bin/go test cmd/internal/sys internal/platform
-          GOEXPERIMENT=simd ./bin/go test cmd/compile/internal/ssa cmd/compile/internal/ssagen
+          run_soft() {
+            name=$1
+            shift
+            echo "=== $name ==="
+            set +e
+            "$@" > "$OUT/$name.log" 2>&1
+            status=$?
+            set -e
+            echo "$name=$status" | tee -a "$OUT/status.env"
+            tail -n 100 "$OUT/$name.log" || true
+          }
 
-          # Preserve the known cross-target failure as review evidence, but do
-          # not conflate it with whether the requested history rebase succeeded.
-          set +e
-          env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go build std \
-            > "$REVIEW_DIR/build-js-wasm32.log" 2>&1
-          js_build_status=$?
-          env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go build std \
-            > "$REVIEW_DIR/build-wasip1-wasm32.log" 2>&1
-          wasip1_build_status=$?
-          set -e
-          cat > "$REVIEW_DIR/cross-build-status.env" <<EOF
-          JS_WASM32_BUILD_STATUS=$js_build_status
-          WASIP1_WASM32_BUILD_STATUS=$wasip1_build_status
-          EOF
+          run_soft build-js-wasm32 env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go build std
+          run_soft build-wasip1-wasm32 env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go build std
 
-          git log --reverse --format='%H%x09%P%x09%aI%x09%s' upstream/master..HEAD \
-            | tee "$REVIEW_DIR/commits.tsv"
-          git diff --stat upstream/master...HEAD > "$REVIEW_DIR/diff-stat.txt"
-          git diff --name-status -M upstream/master...HEAD > "$REVIEW_DIR/changed-files.txt"
-          git diff --binary upstream/master...HEAD > "$REVIEW_DIR/series.patch"
+          run_soft vet-js-wasm32 env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go vet internal/bytealg reflect runtime
+          run_soft vet-wasip1-wasm32 env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go vet internal/bytealg reflect runtime
 
-          i=0
-          while IFS=$'\t' read -r sha parents authored subject; do
-            i=$((i + 1))
-            safe_subject=$(printf '%s' "$subject" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//;s/-$//')
-            printf -v n '%02d' "$i"
-            git show --format=fuller --find-renames --find-copies --stat --patch "$sha" \
-              > "$REVIEW_DIR/commits/${n}-${sha:0:12}-${safe_subject}.patch"
-          done < "$REVIEW_DIR/commits.tsv"
+          run_soft test-js-bytealg env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" internal/bytealg
+          run_soft test-js-reflect env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" reflect
+          run_soft test-js-runtime env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" runtime
+          run_soft test-js-simd env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd/archsimd
 
-          git archive --format=tar.gz --output="$REVIEW_DIR/rebased-tree.tar.gz" HEAD
+          run_soft compile-wasi-runtime env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go test -c runtime -o /tmp/runtime-wasip1-wasm32.test
+          run_soft compile-wasi-simd env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go test -c simd/archsimd -o /tmp/simd-wasip1-wasm32.test
 
-          remote_head=$(git ls-remote origin refs/heads/feat/wasm32 | cut -f1)
-          if [[ "$remote_head" != "$EXPECTED_OLD_HEAD" ]]; then
-            echo "Remote branch moved before push: expected $EXPECTED_OLD_HEAD, got $remote_head" >&2
-            exit 8
-          fi
+          git status --short | tee "$OUT/git-status.txt"
 
-          new_head=$(git rev-parse HEAD)
-          git push --force-with-lease="refs/heads/feat/wasm32:$EXPECTED_OLD_HEAD" \
-            origin HEAD:refs/heads/feat/wasm32
-
-          cat > "$REVIEW_DIR/result.env" <<EOF
-          UPSTREAM_HEAD=$upstream_head
-          OLD_FEATURE_HEAD=$EXPECTED_OLD_HEAD
-          NEW_FEATURE_HEAD=$new_head
-          COMMIT_COUNT=$commit_count
-          JS_WASM32_BUILD_STATUS=$js_build_status
-          WASIP1_WASM32_BUILD_STATUS=$wasip1_build_status
-          EOF
-          echo "Force-pushed $new_head onto feat/wasm32"
-
-      - name: Upload complete review material
+      - name: Upload diagnostic material
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feat-wasm32-rebased-review-final
-          path: /tmp/wasm32-review
+          name: feat-wasm32-post-xsys-diagnostic
+          path: /tmp/wasm32-diagnostic
           if-no-files-found: warn
           retention-days: 7
