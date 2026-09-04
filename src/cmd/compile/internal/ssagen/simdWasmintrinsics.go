@@ -69,6 +69,7 @@ func initWasmSIMD() {
 
 	addWasmSIMD := func(pkg, fn string, builder func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value) {
 		intrinsics.add(sys.ArchWasm, pkg, fn, builder)
+		intrinsics.add(sys.ArchWasm32, pkg, fn, builder)
 	}
 
 	addWasmSIMD("simd/archsimd", "Int8x16.Abs", makeSimdOp1(ssaop.OpAbsInt8x16))

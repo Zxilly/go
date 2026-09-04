@@ -1726,7 +1726,7 @@ func one(filename string, prologue func(s, buildArch string, out io.Writer), sat
 	if strings.Contains(filename, "%W") {
 		smallFile := strings.ReplaceAll(filename, "%W", "128")
 		largeFile := strings.ReplaceAll(filename, "%W", "wider")
-		oneArch(smallFile, "(amd64 || wasm || arm64)", prologue, filterSmallOnly, sats...)
+		oneArch(smallFile, "(amd64 || wasm || wasm32 || arm64)", prologue, filterSmallOnly, sats...)
 		oneArch(largeFile, "amd64", prologue, filterLarge, sats...)
 		return
 	}

@@ -1479,3 +1479,19 @@ func TestIntrinsicBuilders(t *testing.T) {
 		t.Errorf("No intrinsic for internal/runtime/sys.Bswap64 on arch %v", sys.ArchPPC64)
 	}
 }
+
+func TestWasmSIMDIntrinsicRegistration(t *testing.T) {
+	oldIntrinsics := intrinsics
+	intrinsics = intrinsicBuilders{}
+	t.Cleanup(func() {
+		intrinsics = oldIntrinsics
+	})
+
+	initWasmSIMD()
+
+	for _, arch := range []*sys.Arch{sys.ArchWasm, sys.ArchWasm32} {
+		if intrinsics.lookup(arch, "simd/archsimd", "Int8x16.Add") == nil {
+			t.Errorf("No intrinsic for simd/archsimd.Int8x16.Add on arch %v", arch)
+		}
+	}
+}
