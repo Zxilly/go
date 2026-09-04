@@ -36,6 +36,22 @@ jobs:
           set -euo pipefail
           git fetch origin refs/heads/automation/rebase-feat-wasm32-20260904:refs/remotes/origin/automation/rebase-feat-wasm32-20260904
           git show origin/automation/rebase-feat-wasm32-20260904:.github/scripts/rebase-wasm32.sh > /tmp/rebase-wasm32.sh
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/rebase-wasm32.sh')
+          text = p.read_text()
+          old = '''if git rev-parse -q --verify REBASE_HEAD >/dev/null 2>&1; then
+            echo "Rebase state remains unexpectedly" >&2
+            exit 5
+          fi'''
+          new = '''if [[ -d .git/rebase-merge || -d .git/rebase-apply ]]; then
+            echo "Rebase state remains unexpectedly" >&2
+            exit 5
+          fi'''
+          if text.count(old) != 1:
+              raise SystemExit('failed to patch rebase-state check')
+          p.write_text(text.replace(old, new))
+          PY
           bash /tmp/rebase-wasm32.sh
 
       - name: Upload complete review material
