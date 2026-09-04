@@ -42,11 +42,11 @@ jobs:
           p = Path('/tmp/rebase-wasm32.sh')
           text = p.read_text()
 
-          def replace_exact(old: str, new: str, label: str) -> None:
+          def replace_exact(old: str, new: str, label: str, expected: int = 1) -> None:
               global text
               count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'failed to patch {label}: found {count} matches')
+              if count != expected:
+                  raise SystemExit(f'failed to patch {label}: found {count}, expected {expected}')
               text = text.replace(old, new)
 
           replace_exact(
@@ -81,7 +81,7 @@ jobs:
           ./bin/go version''',
               '''# Build once so generation runs as a true GOROOT command and may import
           # GOROOT-internal generator dependencies such as internal/diff.
-          ./src/make.bash
+          (cd src && ./make.bash)
           ./bin/go version
 
           # Regenerate from the rebased generators. This validates the generators and
@@ -98,7 +98,7 @@ jobs:
             git add -A
             GIT_EDITOR=true git commit --amend --no-edit
             # Rebuild after amending generated source to validate exactly what will be pushed.
-            ./src/make.bash
+            (cd src && ./make.bash)
           fi
           ./bin/go version''',
               'generation/build order',
