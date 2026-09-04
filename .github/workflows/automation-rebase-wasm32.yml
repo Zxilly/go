@@ -1,4 +1,4 @@
-name: Temporary diagnose wasm32 after correct x/sys fix
+name: Temporary final wasm32 review diagnostics
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: diagnose-feat-wasm32-20260904-v2
+  group: diagnose-feat-wasm32-20260904-final
   cancel-in-progress: false
 
 jobs:
@@ -29,50 +29,16 @@ jobs:
           go-version: stable
           check-latest: true
 
-      - name: Apply review-only x/sys/cpu fix and diagnose
+      - name: Run final review-only diagnostics
         shell: bash
         env:
           EXPECTED_HEAD: 104cb8ce40214e711c00ea336cbfc700c93c0283
-          OUT: /tmp/wasm32-diagnostic-v2
+          OUT: /tmp/wasm32-final-diagnostic
         run: |
           set -euo pipefail
           mkdir -p "$OUT"
           exec > >(tee "$OUT/workflow.log") 2>&1
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
-
-          # cpu_wasm.go's suffix itself excludes wasm32. Model the proper source
-          # fix by adding an architecture-specific peer rather than merely
-          # widening the build expression on the existing file.
-          cp src/vendor/golang.org/x/sys/cpu/cpu_wasm.go \
-             src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path('src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go')
-          s = p.read_text()
-          assert s.count('//go:build wasm') == 1
-          p.write_text(s.replace('//go:build wasm', '//go:build wasm32'))
-
-          p = Path('src/vendor/golang.org/x/sys/cpu/endian_little.go')
-          s = p.read_text()
-          old = ' || sh || wasm'
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, ' || sh || wasm || wasm32'))
-
-          p = Path('src/vendor/golang.org/x/sys/cpu/byteorder.go')
-          s = p.read_text()
-          old = '\t\t"sh":\n\t\treturn littleEndian{}'
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, '\t\t"sh", "wasm", "wasm32":\n\t\treturn littleEndian{}'))
-          PY
-
-          git diff --no-index /dev/null src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go \
-            > "$OUT/add-cpu-wasm32.patch" || true
-          git diff -- src/vendor/golang.org/x/sys/cpu/endian_little.go \
-            src/vendor/golang.org/x/sys/cpu/byteorder.go > "$OUT/other-xsys-fixes.patch"
-
-          (cd src && ./make.bash)
-          ./bin/go version | tee "$OUT/go-version.txt"
 
           run_soft() {
             name=$1
@@ -83,41 +49,182 @@ jobs:
             status=$?
             set -e
             echo "$name=$status" | tee -a "$OUT/status.env"
-            tail -n 160 "$OUT/$name.log" || true
+            tail -n 200 "$OUT/$name.log" || true
           }
 
-          run_soft build-js-wasm32 env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go build std
-          run_soft build-wasip1-wasm32 env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go build std
+          # Review-only fix 1: make the vendored x/sys/cpu wasm fallback shared
+          # by wasm and wasm32. Merely widening cpu_wasm.go's build tag would not
+          # work because the filename suffix still selects only GOARCH=wasm.
+          mv src/vendor/golang.org/x/sys/cpu/cpu_wasm.go \
+             src/vendor/golang.org/x/sys/cpu/cpu_wasmx.go
 
-          run_soft test-js-syscall-js env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" syscall/js
-          run_soft test-js-runtime env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" runtime
-          run_soft test-js-reflect env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" reflect
-          run_soft test-js-os env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" os
-          run_soft test-js-net env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" net
-          run_soft test-js-simd env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
-            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd/archsimd
+          python3 <<'PY'
+          from pathlib import Path
 
-          run_soft compile-wasi-runtime env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
-            ./bin/go test -vet=off -c runtime -o /tmp/runtime-wasip1-wasm32.test
-          run_soft compile-wasi-os env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
-            ./bin/go test -vet=off -c os -o /tmp/os-wasip1-wasm32.test
-          run_soft compile-wasi-net env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
-            ./bin/go test -vet=off -c net -o /tmp/net-wasip1-wasm32.test
-          run_soft compile-wasi-simd env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
-            ./bin/go test -vet=off -c simd/archsimd -o /tmp/simd-wasip1-wasm32.test
+          def replace(path: str, old: str, new: str, count: int = 1) -> None:
+              p = Path(path)
+              s = p.read_text()
+              actual = s.count(old)
+              if actual != count:
+                  raise SystemExit(f"{path}: found {actual}, expected {count}: {old!r}")
+              p.write_text(s.replace(old, new))
 
-          git status --short | tee "$OUT/git-status.txt"
+          replace(
+              'src/vendor/golang.org/x/sys/cpu/cpu_wasmx.go',
+              '//go:build wasm',
+              '//go:build wasm || wasm32',
+          )
+          replace(
+              'src/vendor/golang.org/x/sys/cpu/endian_little.go',
+              ' || sh || wasm',
+              ' || sh || wasm || wasm32',
+          )
+
+          # Review-only fix 2: Value.Int returns target-width int. On wasm32 it
+          # truncates Node's wide numeric stat fields before conversion to int64.
+          fs = 'src/syscall/fs_js.go'
+          replacements = {
+              'st.Dev = int64(jsSt.Get("dev").Int())': 'st.Dev = int64(jsSt.Get("dev").Float())',
+              'st.Ino = uint64(jsSt.Get("ino").Int())': 'st.Ino = uint64(jsSt.Get("ino").Float())',
+              'st.Rdev = int64(jsSt.Get("rdev").Int())': 'st.Rdev = int64(jsSt.Get("rdev").Float())',
+              'st.Size = int64(jsSt.Get("size").Int())': 'st.Size = int64(jsSt.Get("size").Float())',
+              'atime := int64(jsSt.Get("atimeMs").Int())': 'atime := int64(jsSt.Get("atimeMs").Float())',
+              'mtime := int64(jsSt.Get("mtimeMs").Int())': 'mtime := int64(jsSt.Get("mtimeMs").Float())',
+              'ctime := int64(jsSt.Get("ctimeMs").Int())': 'ctime := int64(jsSt.Get("ctimeMs").Float())',
+          }
+          for old, new in replacements.items():
+              replace(fs, old, new)
+          PY
+
+          git diff -- src/vendor/golang.org/x/sys/cpu src/syscall/fs_js.go \
+            > "$OUT/review-fixes-xsys-and-stat.patch"
+
+          (cd src && ./make.bash)
+          ./bin/go version | tee "$OUT/go-version.txt"
+
+          run_soft build-js-std env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go build std
+          run_soft build-wasip1-std env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
+            ./bin/go build std
+          run_soft test-js-os-after-stat-fix env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m \
+            -exec="$PWD/lib/wasm/go_js_wasm32_exec" os
+
+          cat > /tmp/wasm32-wide-stat.go <<'EOF'
+          package main
+
+          import (
+              "fmt"
+              "os"
+              "syscall"
+              "time"
+          )
+
+          func must(err error) {
+              if err != nil {
+                  panic(err)
+              }
+          }
+
+          func main() {
+              f, err := os.CreateTemp("", "wasm32-wide-stat-")
+              must(err)
+              name := f.Name()
+              defer os.Remove(name)
+              defer f.Close()
+
+              const wantSize int64 = (5 << 30) + 123
+              must(f.Truncate(wantSize))
+              wantTime := time.Date(2026, 9, 4, 6, 23, 45, 678000000, time.UTC)
+              must(os.Chtimes(name, wantTime, wantTime))
+
+              st, err := os.Stat(name)
+              must(err)
+              if st.Size() != wantSize {
+                  panic(fmt.Sprintf("size=%d want=%d", st.Size(), wantSize))
+              }
+              if d := st.ModTime().Sub(wantTime); d < -time.Millisecond || d > time.Millisecond {
+                  panic(fmt.Sprintf("mtime=%s want=%s", st.ModTime(), wantTime))
+              }
+              raw := st.Sys().(*syscall.Stat_t)
+              fmt.Printf("size=%d mtime=%s dev=%d ino=%d\n", st.Size(), st.ModTime(), raw.Dev, raw.Ino)
+          }
+          EOF
+          run_soft test-js-wide-stat bash -c '
+            set -e
+            env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go build -o /tmp/wasm32-wide-stat.wasm /tmp/wasm32-wide-stat.go
+            exec ./lib/wasm/go_js_wasm32_exec /tmp/wasm32-wide-stat.wasm
+          '
+
+          # Run the real architecture SIMD suite, not the package with no tests.
+          run_soft test-js-simd-internal env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m \
+            -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd/archsimd/internal/simd_test
+
+          # Quantify and validate the missed root SIMD test build tag.
+          run_soft list-js-root-simd-before env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=10m -list=. \
+            -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('src/simd/midway_common_test.go')
+          s = p.read_text()
+          old = '//go:build goexperiment.simd && (amd64 || arm64 || wasm)'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '//go:build goexperiment.simd && (amd64 || arm64 || wasm || wasm32)'))
+          PY
+          run_soft list-js-root-simd-after env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=10m -list=. \
+            -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd
+          run_soft test-js-root-simd-after env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m \
+            -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd
+
+          # Confirm whether the missed vendored telemetry mmap tag is observable.
+          run_soft build-js-cmd-go-before-telemetry-fix env GOOS=js GOARCH=wasm32 \
+            ./bin/go build -o /tmp/go-js-wasm32-before.wasm cmd/go
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('src/cmd/vendor/golang.org/x/telemetry/internal/mmap/mmap_other.go')
+          s = p.read_text()
+          old = '//go:build (js && wasm) || wasip1 || plan9'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '//go:build (js && (wasm || wasm32)) || wasip1 || plan9'))
+          PY
+          run_soft build-js-cmd-go-after-telemetry-fix env GOOS=js GOARCH=wasm32 \
+            ./bin/go build -o /tmp/go-js-wasm32-after.wasm cmd/go
+
+          # Demonstrate that asmdecl currently skips every _wasm32.s file, then
+          # add an analysis-only architecture entry and rerun it.
+          run_soft vet-wasm32-asm-before env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go vet internal/bytealg reflect runtime
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('src/cmd/vendor/golang.org/x/tools/go/analysis/passes/asmdecl/asmdecl.go')
+          s = p.read_text()
+          old = '\tasmArchWasm     = asmArch{name: "wasm", bigEndian: false, stack: "SP", lr: false}\n'
+          assert s.count(old) == 1
+          s = s.replace(old, old + '\tasmArchWasm32   = asmArch{name: "wasm32", bigEndian: false, stack: "SP", lr: false}\n')
+          old = '\t\t&asmArchWasm,\n'
+          assert s.count(old) == 1
+          s = s.replace(old, old + '\t\t&asmArchWasm32,\n')
+          p.write_text(s)
+          PY
+          ./bin/go install cmd/vet
+          run_soft vet-wasm32-asm-after env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go vet internal/bytealg reflect runtime
+
+          git diff -- src/simd/midway_common_test.go \
+            src/cmd/vendor/golang.org/x/telemetry/internal/mmap/mmap_other.go \
+            src/cmd/vendor/golang.org/x/tools/go/analysis/passes/asmdecl/asmdecl.go \
+            > "$OUT/review-fixes-tests-telemetry-vet.patch"
+          git status --short > "$OUT/git-status.txt"
 
       - name: Upload diagnostic material
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feat-wasm32-post-correct-xsys-diagnostic
-          path: /tmp/wasm32-diagnostic-v2
+          name: feat-wasm32-final-review-diagnostic
+          path: /tmp/wasm32-final-diagnostic
           if-no-files-found: warn
           retention-days: 7
