@@ -1,4 +1,4 @@
-name: Temporary diagnose wasm32 after review fixups
+name: Temporary diagnose wasm32 after correct x/sys fix
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: diagnose-feat-wasm32-20260904
+  group: diagnose-feat-wasm32-20260904-v2
   cancel-in-progress: false
 
 jobs:
@@ -29,24 +29,29 @@ jobs:
           go-version: stable
           check-latest: true
 
-      - name: Apply review-only x/sys/cpu fixups and diagnose
+      - name: Apply review-only x/sys/cpu fix and diagnose
         shell: bash
         env:
           EXPECTED_HEAD: 104cb8ce40214e711c00ea336cbfc700c93c0283
-          OUT: /tmp/wasm32-diagnostic
+          OUT: /tmp/wasm32-diagnostic-v2
         run: |
           set -euo pipefail
           mkdir -p "$OUT"
           exec > >(tee "$OUT/workflow.log") 2>&1
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
 
+          # cpu_wasm.go's suffix itself excludes wasm32. Model the proper source
+          # fix by adding an architecture-specific peer rather than merely
+          # widening the build expression on the existing file.
+          cp src/vendor/golang.org/x/sys/cpu/cpu_wasm.go \
+             src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go
           python3 <<'PY'
           from pathlib import Path
 
-          p = Path('src/vendor/golang.org/x/sys/cpu/cpu_wasm.go')
+          p = Path('src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go')
           s = p.read_text()
           assert s.count('//go:build wasm') == 1
-          p.write_text(s.replace('//go:build wasm', '//go:build wasm || wasm32'))
+          p.write_text(s.replace('//go:build wasm', '//go:build wasm32'))
 
           p = Path('src/vendor/golang.org/x/sys/cpu/endian_little.go')
           s = p.read_text()
@@ -61,7 +66,11 @@ jobs:
           p.write_text(s.replace(old, '\t\t"sh", "wasm", "wasm32":\n\t\treturn littleEndian{}'))
           PY
 
-          git diff -- src/vendor/golang.org/x/sys/cpu | tee "$OUT/review-fix.patch"
+          git diff --no-index /dev/null src/vendor/golang.org/x/sys/cpu/cpu_wasm32.go \
+            > "$OUT/add-cpu-wasm32.patch" || true
+          git diff -- src/vendor/golang.org/x/sys/cpu/endian_little.go \
+            src/vendor/golang.org/x/sys/cpu/byteorder.go > "$OUT/other-xsys-fixes.patch"
+
           (cd src && ./make.bash)
           ./bin/go version | tee "$OUT/go-version.txt"
 
@@ -74,22 +83,33 @@ jobs:
             status=$?
             set -e
             echo "$name=$status" | tee -a "$OUT/status.env"
-            tail -n 100 "$OUT/$name.log" || true
+            tail -n 160 "$OUT/$name.log" || true
           }
 
           run_soft build-js-wasm32 env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go build std
           run_soft build-wasip1-wasm32 env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go build std
 
-          run_soft vet-js-wasm32 env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go vet internal/bytealg reflect runtime
-          run_soft vet-wasip1-wasm32 env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go vet internal/bytealg reflect runtime
+          run_soft test-js-syscall-js env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" syscall/js
+          run_soft test-js-runtime env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" runtime
+          run_soft test-js-reflect env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" reflect
+          run_soft test-js-os env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" os
+          run_soft test-js-net env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" net
+          run_soft test-js-simd env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 \
+            ./bin/go test -vet=off -timeout=30m -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd/archsimd
 
-          run_soft test-js-bytealg env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" internal/bytealg
-          run_soft test-js-reflect env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" reflect
-          run_soft test-js-runtime env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" runtime
-          run_soft test-js-simd env GOEXPERIMENT=simd GOOS=js GOARCH=wasm32 ./bin/go test -timeout=20m -exec="$PWD/lib/wasm/go_js_wasm32_exec" simd/archsimd
-
-          run_soft compile-wasi-runtime env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go test -c runtime -o /tmp/runtime-wasip1-wasm32.test
-          run_soft compile-wasi-simd env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 ./bin/go test -c simd/archsimd -o /tmp/simd-wasip1-wasm32.test
+          run_soft compile-wasi-runtime env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
+            ./bin/go test -vet=off -c runtime -o /tmp/runtime-wasip1-wasm32.test
+          run_soft compile-wasi-os env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
+            ./bin/go test -vet=off -c os -o /tmp/os-wasip1-wasm32.test
+          run_soft compile-wasi-net env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
+            ./bin/go test -vet=off -c net -o /tmp/net-wasip1-wasm32.test
+          run_soft compile-wasi-simd env GOEXPERIMENT=simd GOOS=wasip1 GOARCH=wasm32 \
+            ./bin/go test -vet=off -c simd/archsimd -o /tmp/simd-wasip1-wasm32.test
 
           git status --short | tee "$OUT/git-status.txt"
 
@@ -97,7 +117,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feat-wasm32-post-xsys-diagnostic
-          path: /tmp/wasm32-diagnostic
+          name: feat-wasm32-post-correct-xsys-diagnostic
+          path: /tmp/wasm32-diagnostic-v2
           if-no-files-found: warn
           retention-days: 7
