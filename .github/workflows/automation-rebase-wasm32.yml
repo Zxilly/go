@@ -89,7 +89,7 @@ jobs:
           test ! -e src/simd/archsimd/ops_wasm.go
           grep -Fq '//go:build goexperiment.simd && (wasm || wasm32)' src/simd/archsimd/types_wasmx.go
           grep -Fq '//go:build goexperiment.simd && (wasm || wasm32)' src/simd/archsimd/ops_wasmx.go
-          grep -Fq 'intrinsics.add(sys.ArchWasm32' src/cmd/compile/internal/ssagen/ssa.go
+          grep -Fq 'intrinsics.add(sys.ArchWasm32' src/cmd/compile/internal/ssagen/simdWasmintrinsics.go
           : > "$REVIEW_DIR/generator-diff-before-amend.patch"''',
               'build and targeted generated-output validation',
           )
@@ -117,6 +117,13 @@ jobs:
               git show --format=fuller --find-renames --find-copies --stat --patch "$sha" > "/tmp/wasm32-review/commits/${n}-${sha:0:12}-${safe_subject}.patch" || true
             done < /tmp/wasm32-review/commits.tsv
           fi
+
+      - name: Archive the rebased source tree for static review
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p /tmp/wasm32-review
+          git archive --format=tar.gz --output=/tmp/wasm32-review/rebased-tree.tar.gz HEAD || true
 
       - name: Upload complete review material
         if: always()
