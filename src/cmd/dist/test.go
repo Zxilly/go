@@ -769,8 +769,8 @@ func (t *tester) registerTests() {
 			env:     []string{"GOEXPERIMENT=" + goexperiments("simd")},
 			pkg:     "simd",
 		})
-		// simd/archsimd supports amd64, arm64, and wasm.
-		archsimdSupported := goarch == "amd64" || goarch == "arm64" || goarch == "wasm"
+		// simd/archsimd supports amd64, arm64, wasm, and wasm32.
+		archsimdSupported := goarch == "amd64" || goarch == "arm64" || goarch == "wasm" || goarch == "wasm32"
 		if archsimdSupported {
 			t.registerTest("GOEXPERIMENT=simd go test simd/archsimd/...", &goTest{
 				variant: "simd",

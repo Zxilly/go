@@ -520,7 +520,7 @@ func RewriteWrapper(pkg *types2.Package, info *types2.Info, files []*syntax.File
 	}
 
 	switch buildcfg.GOARCH {
-	case "wasm", "amd64", "arm64":
+	case "wasm", "wasm32", "amd64", "arm64":
 	default:
 		return false
 	}

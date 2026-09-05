@@ -10,7 +10,7 @@ import (
 
 func rewriteSizes() []int {
 	switch buildcfg.GOARCH {
-	case "wasm":
+	case "wasm", "wasm32":
 		return []int{0, 128}
 	case "amd64":
 		return []int{0, 128, 256, 512}
