@@ -84,6 +84,7 @@ var okgoarch = []string{
 	"s390x",
 	"sparc64",
 	"wasm",
+	"wasm32",
 }
 
 // The known operating systems.

@@ -13,11 +13,13 @@ func memequal(a, b unsafe.Pointer, size uintptr) bool
 
 func Equal8Constant(p unsafe.Pointer) bool {
 	// wasm:`I64Eq` -`.*memequal.*`
+	// wasm32:`I64Eq` -`.*memequal.*`
 	return memequal(p, unsafe.Pointer(unsafe.StringData("abcdefgh")), 8)
 }
 
 func Equal5Constant(p unsafe.Pointer) bool {
 	// wasm:`I64Eq` -`.*memequal.*`
+	// wasm32:`I64Eq` -`.*memequal.*`
 	return memequal(unsafe.Pointer(unsafe.StringData("abcde")), p, 5)
 }
 

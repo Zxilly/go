@@ -55,7 +55,7 @@ func incrementConfig() {
 		counter.Inc("go/platform/target/goppc64:" + cfg.GOPPC64)
 	case "riscv64":
 		counter.Inc("go/platform/target/goriscv64:" + cfg.GORISCV64)
-	case "wasm":
+	case "wasm", "wasm32":
 		counter.Inc("go/platform/target/gowasm:" + cfg.GOWASM)
 	}
 
