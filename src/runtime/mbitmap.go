@@ -241,6 +241,7 @@ func (tp typePointers) nextFast() (typePointers, uintptr) {
 //
 //go:nosplit
 func (tp typePointers) next(limit uintptr) (typePointers, uintptr) {
+	const step = goarch.PtrSize * ptrBits
 	for {
 		if tp.mask != 0 {
 			return tp.nextFast()
@@ -252,22 +253,24 @@ func (tp typePointers) next(limit uintptr) (typePointers, uintptr) {
 		}
 
 		// Advance to the next element if necessary.
-		if tp.addr+goarch.PtrSize*ptrBits >= tp.elem+tp.typ.PtrBytes {
+		oldAddr := tp.addr
+		if tp.addr-tp.elem+step >= tp.typ.PtrBytes {
 			tp.elem += tp.typ.Size_
 			tp.addr = tp.elem
 		} else {
-			tp.addr += ptrBits * goarch.PtrSize
+			tp.addr += step
 		}
 
-		// Check if we've exceeded the limit with the last update.
-		if tp.addr >= limit {
+		// Check if we've reached or exceeded the limit with the last update.
+		// Compare distances so a zero limit can represent 1<<32 on wasm32.
+		if tp.addr-oldAddr >= limit-oldAddr {
 			return typePointers{}, 0
 		}
 
 		// Grab more bits and try again.
 		tp.mask = readUintptr(addb(getGCMask(tp.typ), (tp.addr-tp.elem)/goarch.PtrSize/8))
-		if tp.addr+goarch.PtrSize*ptrBits > limit {
-			bits := (tp.addr + goarch.PtrSize*ptrBits - limit) / goarch.PtrSize
+		if remaining := limit - tp.addr; step > remaining {
+			bits := (step - remaining) / goarch.PtrSize
 			tp.mask &^= ((1 << (bits)) - 1) << (ptrBits - bits)
 		}
 	}
@@ -282,17 +285,18 @@ func (tp typePointers) next(limit uintptr) (typePointers, uintptr) {
 //go:nosplit
 func (tp typePointers) fastForward(n, limit uintptr) typePointers {
 	// Basic bounds check.
-	target := tp.addr + n
-	if target >= limit {
+	if n >= limit-tp.addr {
 		return typePointers{}
 	}
+	target := tp.addr + n
+	const step = goarch.PtrSize * ptrBits
 	if tp.typ == nil {
 		// Handle small objects.
 		// Clear any bits before the target address.
 		tp.mask &^= (1 << ((target - tp.addr) / goarch.PtrSize)) - 1
 		// Clear any bits past the limit.
-		if tp.addr+goarch.PtrSize*ptrBits > limit {
-			bits := (tp.addr + goarch.PtrSize*ptrBits - limit) / goarch.PtrSize
+		if remaining := limit - tp.addr; step > remaining {
+			bits := (step - remaining) / goarch.PtrSize
 			tp.mask &^= ((1 << (bits)) - 1) << (ptrBits - bits)
 		}
 		return tp
@@ -300,6 +304,7 @@ func (tp typePointers) fastForward(n, limit uintptr) typePointers {
 
 	// Move up elem and addr.
 	// Offsets within an element are always at a ptrBits*goarch.PtrSize boundary.
+	oldAddr := tp.addr
 	if n >= tp.typ.Size_ {
 		// elem needs to be moved to the element containing
 		// tp.addr + n.
@@ -318,7 +323,7 @@ func (tp typePointers) fastForward(n, limit uintptr) typePointers {
 		tp.mask = readUintptr(getGCMask(tp.typ))
 
 		// We may have exceeded the limit after this. Bail just like next does.
-		if tp.addr >= limit {
+		if tp.addr-oldAddr >= limit-oldAddr {
 			return typePointers{}
 		}
 	} else {
@@ -327,8 +332,8 @@ func (tp typePointers) fastForward(n, limit uintptr) typePointers {
 		tp.mask = readUintptr(addb(getGCMask(tp.typ), (tp.addr-tp.elem)/goarch.PtrSize/8))
 		tp.mask &^= (1 << ((target - tp.addr) / goarch.PtrSize)) - 1
 	}
-	if tp.addr+goarch.PtrSize*ptrBits > limit {
-		bits := (tp.addr + goarch.PtrSize*ptrBits - limit) / goarch.PtrSize
+	if remaining := limit - tp.addr; step > remaining {
+		bits := (step - remaining) / goarch.PtrSize
 		tp.mask &^= ((1 << (bits)) - 1) << (ptrBits - bits)
 	}
 	return tp
@@ -409,7 +414,7 @@ func bulkBarrierPreWrite(dst, src, size uintptr, typ *abi.Type) {
 			}
 		}
 		return
-	} else if s.state.get() != mSpanInUse || dst < s.base() || s.limit <= dst {
+	} else if s.state.get() != mSpanInUse || !s.contains(dst) {
 		// dst was heap memory at some point, but isn't now.
 		// It can't be a global. It must be either our stack,
 		// or in the case of direct channel sends, it could be
@@ -1377,7 +1382,7 @@ func findObject(p, refBase, refOff uintptr) (base uintptr, s *mspan, objIndex ui
 	//
 	// Check s.state to synchronize with span initialization
 	// before checking other fields. See also spanOfHeap.
-	if state := s.state.get(); state != mSpanInUse || p < s.base() || p >= s.limit {
+	if state := s.state.get(); state != mSpanInUse || !s.contains(p) {
 		// Pointers into stacks are also ok, the runtime manages these explicitly.
 		if state == mSpanManual {
 			return
@@ -1945,7 +1950,7 @@ func pointerMask(ep any) (mask []byte) {
 	}
 
 	// stack
-	if gp := getg(); gp.m.curg.stack.lo <= uintptr(p) && uintptr(p) < gp.m.curg.stack.hi {
+	if gp := getg(); gp.m.curg.stack.contains(uintptr(p)) {
 		found := false
 		var u unwinder
 		for u.initAt(gp.m.curg.sched.pc, gp.m.curg.sched.sp, 0, gp.m.curg, 0); u.valid(); u.next() {

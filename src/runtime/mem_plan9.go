@@ -9,13 +9,16 @@ import "unsafe"
 func sbrk(n uintptr) unsafe.Pointer {
 	// Plan 9 sbrk from /sys/src/libc/9sys/sbrk.c
 	bl := bloc
-	n = memRound(n)
-	if bl+n > blocMax {
-		if brk_(unsafe.Pointer(bl+n)) < 0 {
+	end := bl + uint64(memRound(n))
+	if end < bl || end > uint64(^uintptr(0)) {
+		return nil
+	}
+	if end > blocMax {
+		if brk_(unsafe.Pointer(uintptr(end))) < 0 {
 			return nil
 		}
-		blocMax = bl + n
+		blocMax = end
 	}
-	bloc += n
-	return unsafe.Pointer(bl)
+	bloc = end
+	return unsafe.Pointer(uintptr(bl))
 }

@@ -1453,35 +1453,49 @@ func tracebacksomeothers(me *g, showf func(*g) bool) {
 func tracebackHexdump(stk stack, frame *stkframe, bad uintptr) {
 	const expand = 32 * goarch.PtrSize
 	const maxExpand = 256 * goarch.PtrSize
-	// Start around frame.sp.
-	lo, hi := frame.sp, frame.sp
-	// Expand to include frame.fp.
-	if frame.fp != 0 && frame.fp < lo {
-		lo = frame.fp
+	// Work in offsets so a zero stk.hi can represent 1<<32 on wasm32.
+	size := stk.hi - stk.lo
+	sp := frame.sp - stk.lo
+	if !stk.containsSP(frame.sp) {
+		if frame.sp < stk.lo {
+			sp = 0
+		} else {
+			sp = size
+		}
 	}
-	if frame.fp != 0 && frame.fp > hi {
-		hi = frame.fp
+	lo, hi := sp, sp
+	if frame.fp != 0 && stk.containsSP(frame.fp) {
+		fp := frame.fp - stk.lo
+		if fp < lo {
+			lo = fp
+		}
+		if fp > hi {
+			hi = fp
+		}
 	}
-	// Expand a bit more.
-	lo, hi = lo-expand, hi+expand
-	// But don't go too far from frame.sp.
-	if lo < frame.sp-maxExpand {
-		lo = frame.sp - maxExpand
+	if lo > expand {
+		lo -= expand
+	} else {
+		lo = 0
 	}
-	if hi > frame.sp+maxExpand {
-		hi = frame.sp + maxExpand
+	if size-hi > expand {
+		hi += expand
+	} else {
+		hi = size
 	}
-	// And don't go outside the stack bounds.
-	if lo < stk.lo {
-		lo = stk.lo
+	if sp-lo > maxExpand {
+		lo = sp - maxExpand
 	}
-	if hi > stk.hi {
-		hi = stk.hi
+	if hi-sp > maxExpand {
+		hi = sp + maxExpand
 	}
+	n := hi - lo
+	lo += stk.lo
+	hi += stk.lo
 
 	// Print the hex dump.
 	print("stack: frame={sp:", hex(frame.sp), ", fp:", hex(frame.fp), "} stack=[", hex(stk.lo), ",", hex(stk.hi), ")\n")
-	hexdumpWords(lo, hi-lo, func(p uintptr, m hexdumpMarker) {
+	hexdumpWords(lo, n, func(p uintptr, m hexdumpMarker) {
 		if p == frame.fp {
 			m.start()
 			println("FP")

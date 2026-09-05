@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build plan9 || wasm
+//go:build plan9 || wasm || wasm32
 
 package runtime
 
@@ -27,13 +27,16 @@ const memDebug = false
 // increase blocMax).
 //
 // When the runtime frees memory at the end of the address space,
-// it decreases bloc, but does not reduces the system break (as
+// it decreases bloc, but does not reduce the system break (as
 // the OS doesn't support it). When the runtime frees memory in
 // the middle of the address space, the memory goes to a free
 // list.
 
-var bloc uintptr    // The runtime's sense of break. Can go up or down.
-var blocMax uintptr // The break of the OS. Only increase.
+// The exclusive end of a 32-bit address space is 1<<32, which does not fit in
+// uintptr on a 32-bit target. Keep break bookkeeping in uint64 and convert to
+// uintptr only for addresses within the address space.
+var bloc uint64    // The runtime's sense of break. Can go up or down.
+var blocMax uint64 // The break of the OS. Only increases.
 var memlock mutex
 
 type memHdr struct {
@@ -190,7 +193,7 @@ func memRound(p uintptr) uintptr {
 }
 
 func initBloc() {
-	bloc = memRound(firstmoduledata.end)
+	bloc = uint64(memRound(firstmoduledata.end))
 	blocMax = bloc
 }
 
@@ -212,12 +215,12 @@ func sysFreeOS(v unsafe.Pointer, n uintptr) {
 	}
 	systemstack(func() {
 		lock(&memlock)
-		if uintptr(v)+n == bloc {
+		if uint64(uintptr(v))+uint64(n) == bloc {
 			// Address range being freed is at the end of memory,
 			// so record a new lower value for end of memory.
 			// Can't actually shrink address space because segment is shared.
 			memclrNoHeapPointers(v, n)
-			bloc -= n
+			bloc -= uint64(n)
 		} else {
 			memFree(v, n)
 			memCheck()
@@ -251,7 +254,7 @@ func sysReserveOS(v unsafe.Pointer, n uintptr, _ string) unsafe.Pointer {
 	var p uintptr
 	systemstack(func() {
 		lock(&memlock)
-		if uintptr(v) == bloc {
+		if uint64(uintptr(v)) == bloc {
 			// Address hint is the current end of memory,
 			// so try to extend the address space.
 			p = uintptr(sbrk(n))
@@ -286,9 +289,18 @@ func sysReserveAlignedSbrk(size, align uintptr) (unsafe.Pointer, uintptr) {
 			return
 		}
 
-		// Round up bloc to align, then allocate size.
-		p = alignUp(bloc, align)
-		r := sbrk(p + size - bloc)
+		// Round up bloc to align, then allocate size. The exclusive end may
+		// be 1<<32 on wasm32, so do the arithmetic before converting to uintptr.
+		p64, ok := alignUp64(bloc, uint64(align))
+		end := p64 + uint64(size)
+		maxPtr := uint64(^uintptr(0))
+		if !ok || end < p64 || p64 > maxPtr || end < bloc || end-bloc > maxPtr {
+			unlock(&memlock)
+			p, size = 0, 0
+			return
+		}
+		p = uintptr(p64)
+		r := sbrk(uintptr(end - bloc))
 		if r == nil {
 			p, size = 0, 0
 		} else if l := p - uintptr(r); l > 0 {
@@ -299,6 +311,17 @@ func sysReserveAlignedSbrk(size, align uintptr) (unsafe.Pointer, uintptr) {
 		unlock(&memlock)
 	})
 	return unsafe.Pointer(p), size
+}
+
+func alignUp64(n, align uint64) (uint64, bool) {
+	if align == 0 {
+		return n, true
+	}
+	end := n + align - 1
+	if end < n {
+		return 0, false
+	}
+	return end &^ (align - 1), true
 }
 
 func needZeroAfterSysUnusedOS() bool {
