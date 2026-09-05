@@ -181,23 +181,24 @@ func ReadDirent(fd int, buf []byte) (int, error) {
 }
 
 func setStat(st *Stat_t, jsSt js.Value) {
-	st.Dev = int64(jsSt.Get("dev").Int())
-	st.Ino = uint64(jsSt.Get("ino").Int())
-	st.Mode = uint32(jsSt.Get("mode").Int())
-	st.Nlink = uint32(jsSt.Get("nlink").Int())
-	st.Uid = uint32(jsSt.Get("uid").Int())
-	st.Gid = uint32(jsSt.Get("gid").Int())
-	st.Rdev = int64(jsSt.Get("rdev").Int())
-	st.Size = int64(jsSt.Get("size").Int())
-	st.Blksize = int32(jsSt.Get("blksize").Int())
-	st.Blocks = int32(jsSt.Get("blocks").Int())
-	atime := int64(jsSt.Get("atimeMs").Int())
+	// Convert directly to the destination type: int is only 32 bits on wasm32.
+	st.Dev = int64(jsSt.Get("dev").Float())
+	st.Ino = uint64(jsSt.Get("ino").Float())
+	st.Mode = uint32(jsSt.Get("mode").Float())
+	st.Nlink = uint32(jsSt.Get("nlink").Float())
+	st.Uid = uint32(jsSt.Get("uid").Float())
+	st.Gid = uint32(jsSt.Get("gid").Float())
+	st.Rdev = int64(jsSt.Get("rdev").Float())
+	st.Size = int64(jsSt.Get("size").Float())
+	st.Blksize = int32(jsSt.Get("blksize").Float())
+	st.Blocks = int32(jsSt.Get("blocks").Float())
+	atime := int64(jsSt.Get("atimeMs").Float())
 	st.Atime = atime / 1000
 	st.AtimeNsec = (atime % 1000) * 1000000
-	mtime := int64(jsSt.Get("mtimeMs").Int())
+	mtime := int64(jsSt.Get("mtimeMs").Float())
 	st.Mtime = mtime / 1000
 	st.MtimeNsec = (mtime % 1000) * 1000000
-	ctime := int64(jsSt.Get("ctimeMs").Int())
+	ctime := int64(jsSt.Get("ctimeMs").Float())
 	st.Ctime = ctime / 1000
 	st.CtimeNsec = (ctime % 1000) * 1000000
 }
