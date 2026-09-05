@@ -194,7 +194,7 @@ func InitConfig(config *ssa.Config) {
 	ir.Syms.Zerobase = typecheck.LookupRuntimeVar("zerobase")
 	ir.Syms.ZeroVal = typecheck.LookupRuntimeVar("zeroVal")
 
-	if Arch.LinkArch.Family == sys.Wasm {
+	if Arch.LinkArch.InFamily(sys.Wasm) {
 		BoundsCheckFunc[ssa.BoundsIndex] = typecheck.LookupRuntimeFunc("goPanicIndex")
 		BoundsCheckFunc[ssa.BoundsIndexU] = typecheck.LookupRuntimeFunc("goPanicIndexU")
 		BoundsCheckFunc[ssa.BoundsSliceAlen] = typecheck.LookupRuntimeFunc("goPanicSliceAlen")
@@ -2952,7 +2952,7 @@ func (s *state) conv(n ir.Node, v *ssa.Value, ft, tt *types.Type) *ssa.Value {
 				conv = conv1
 			}
 		}
-		if Arch.LinkArch.Family == sys.ARM64 || Arch.LinkArch.Family == sys.Wasm || Arch.LinkArch.Family == sys.S390X || s.softFloat {
+		if Arch.LinkArch.Family == sys.ARM64 || Arch.LinkArch.InFamily(sys.Wasm) || Arch.LinkArch.Family == sys.S390X || s.softFloat {
 			if conv1, ok1 := uint64fpConvOpToSSA[twoTypes{s.concreteEtype(ft), s.concreteEtype(tt)}]; ok1 {
 				conv = conv1
 			}
@@ -5229,7 +5229,7 @@ func (s *state) call(n *ir.CallExpr, k callKind, returnResultAddr bool, deferExt
 // maybeNilCheckClosure checks if a nil check of a closure is needed in some
 // architecture-dependent situations and, if so, emits the nil check.
 func (s *state) maybeNilCheckClosure(closure *ssa.Value, k callKind) {
-	if Arch.LinkArch.Family == sys.Wasm || buildcfg.GOOS == "aix" && k != callGo {
+	if Arch.LinkArch.InFamily(sys.Wasm) || buildcfg.GOOS == "aix" && k != callGo {
 		// On AIX, the closure needs to be verified as fn can be nil, except if it's a call go. This needs to be handled by the runtime to have the "go of nil func value" error.
 		// TODO(neelance): On other architectures this should be eliminated by the optimization steps
 		s.nilCheck(closure)
@@ -5546,7 +5546,7 @@ func (s *state) boundsCheck(idx, len *ssa.Value, kind ssa.BoundsKind, bounded bo
 	b.AddEdgeTo(bPanic)
 
 	s.startBlock(bPanic)
-	if Arch.LinkArch.Family == sys.Wasm {
+	if Arch.LinkArch.InFamily(sys.Wasm) {
 		// TODO(khr): figure out how to do "register" based calling convention for bounds checks.
 		// Should be similar to gcWriteBarrier, but I can't make it work.
 		s.rtcall(BoundsCheckFunc[kind], false, nil, idx, len)
@@ -7280,7 +7280,7 @@ func genssa(htmlWriter ssa.HTMLWriter, f *ssa.Func, pp *objw.Progs) {
 		// inline marks.
 		for p := s.pp.Text; p != nil; p = p.Link {
 			if p.As == obj.ANOP || p.As == obj.AFUNCDATA || p.As == obj.APCDATA || p.As == obj.ATEXT ||
-				p.As == obj.APCALIGN || p.As == obj.APCALIGNMAX || Arch.LinkArch.Family == sys.Wasm {
+				p.As == obj.APCALIGN || p.As == obj.APCALIGNMAX || Arch.LinkArch.InFamily(sys.Wasm) {
 				// Don't use 0-sized instructions as inline marks, because we need
 				// to identify inline mark instructions by pc offset.
 				// (Some of these instructions are sometimes zero-sized, sometimes not.

@@ -9,7 +9,9 @@ import (
 	"cmd/link/internal/ld"
 )
 
-func Init() (*sys.Arch, ld.Arch) {
+// Init returns the architecture configuration for the wasm linker.
+// is64Bit selects between wasm (true) and wasm32 (false).
+func Init(is64Bit bool) (*sys.Arch, ld.Arch) {
 	theArch := ld.Arch{
 		Funcalign: 16,
 		Maxalign:  32,
@@ -22,7 +24,10 @@ func Init() (*sys.Arch, ld.Arch) {
 		Gentext:       gentext,
 	}
 
-	return sys.ArchWasm, theArch
+	if is64Bit {
+		return sys.ArchWasm, theArch
+	}
+	return sys.ArchWasm32, theArch
 }
 
 func archinit(ctxt *ld.Link) {

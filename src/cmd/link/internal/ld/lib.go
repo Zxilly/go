@@ -414,11 +414,16 @@ func libinit(ctxt *Link) {
 	}
 
 	if *flagEntrySymbol == "" {
+		// wasm32 reuses the wasm runtime entry points (_rt0_wasm_*).
+		entryArch := buildcfg.GOARCH
+		if entryArch == "wasm32" {
+			entryArch = "wasm"
+		}
 		switch ctxt.BuildMode {
 		case BuildModeCShared, BuildModeCArchive:
-			*flagEntrySymbol = fmt.Sprintf("_rt0_%s_%s_lib", buildcfg.GOARCH, buildcfg.GOOS)
+			*flagEntrySymbol = fmt.Sprintf("_rt0_%s_%s_lib", entryArch, buildcfg.GOOS)
 		case BuildModeExe, BuildModePIE:
-			*flagEntrySymbol = fmt.Sprintf("_rt0_%s_%s", buildcfg.GOARCH, buildcfg.GOOS)
+			*flagEntrySymbol = fmt.Sprintf("_rt0_%s_%s", entryArch, buildcfg.GOOS)
 		case BuildModeShared, BuildModePlugin:
 			// No *flagEntrySymbol for -buildmode=shared and plugin
 		default:

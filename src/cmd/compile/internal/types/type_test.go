@@ -78,3 +78,25 @@ func TestSSACompare(t *testing.T) {
 		}
 	}
 }
+
+func TestWasm32FuncArgWidth(t *testing.T) {
+	oldPtr, oldReg, oldMax := PtrSize, RegSize, MaxWidth
+	t.Cleanup(func() {
+		PtrSize, RegSize, MaxWidth = oldPtr, oldReg, oldMax
+	})
+	PtrSize = 4
+	RegSize = 8
+	MaxWidth = 1 << 50
+
+	i32 := newType(TINT32)
+	CalcSize(i32)
+	fn := NewSignature(
+		nil,
+		[]*Field{NewField(src.NoXPos, nil, i32)},
+		[]*Field{NewField(src.NoXPos, nil, i32)},
+	)
+	CalcSize(fn)
+	if got, want := fn.ArgWidth(), int64(8); got != want {
+		t.Fatalf("func(int32) int32 ArgWidth = %d, want %d", got, want)
+	}
+}

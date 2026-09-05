@@ -331,15 +331,16 @@ func (config *ABIConfig) ABIAnalyzeTypes(params, results []*types.Type) *ABIPara
 
 	// Inputs
 	info.inparams = assignParams(params, false)
-	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.RegSize))
+	// Stack results follow the ABI0 layout.
+	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.PtrSize))
 	info.inRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 
 	// Outputs
 	s.rUsed = RegAmounts{}
 	info.outparams = assignParams(results, true)
-	// The spill area is at a register-aligned offset and its size is rounded up to a register alignment.
+	// The spill area size is rounded up to register alignment.
 	// TODO in theory could align offset only to minimum required by spilled data types.
-	info.offsetToSpillArea = alignTo(s.stackOffset, types.RegSize)
+	info.offsetToSpillArea = alignTo(s.stackOffset, types.PtrSize)
 	info.spillAreaSize = alignTo(s.spillOffset, types.RegSize)
 	info.outRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 
@@ -373,15 +374,16 @@ func (config *ABIConfig) ABIAnalyzeFuncType(ft *types.Type) *ABIParamResultInfo 
 
 	// Inputs
 	info.inparams = assignParams(ft.RecvParams(), false)
-	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.RegSize))
+	// Stack results follow the ABI0 layout.
+	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.PtrSize))
 	info.inRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 
 	// Outputs
 	s.rUsed = RegAmounts{}
 	info.outparams = assignParams(ft.Results(), true)
-	// The spill area is at a register-aligned offset and its size is rounded up to a register alignment.
+	// The spill area size is rounded up to register alignment.
 	// TODO in theory could align offset only to minimum required by spilled data types.
-	info.offsetToSpillArea = alignTo(s.stackOffset, types.RegSize)
+	info.offsetToSpillArea = alignTo(s.stackOffset, types.PtrSize)
 	info.spillAreaSize = alignTo(s.spillOffset, types.RegSize)
 	info.outRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 	return info
