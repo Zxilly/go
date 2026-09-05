@@ -1059,7 +1059,7 @@ func newstack() {
 	if thisg.m.morebuf.g.ptr() != thisg.m.curg {
 		print("runtime: newstack called from g=", hex(thisg.m.morebuf.g), "\n"+"\tm=", thisg.m, " m->curg=", thisg.m.curg, " m->g0=", thisg.m.g0, " m->gsignal=", thisg.m.gsignal, "\n")
 		morebuf := thisg.m.morebuf
-		traceback(morebuf.pc, morebuf.sp, morebuf.lr, morebuf.g.ptr())
+		traceback(morebuf.pc, morebuf.sp, gobufTracebackLR(&morebuf), morebuf.g.ptr())
 		throw("runtime: wrong goroutine in newstack")
 	}
 
@@ -1090,7 +1090,7 @@ func newstack() {
 			"\tsched={pc:", hex(gp.sched.pc), " sp:", hex(gp.sched.sp), " lr:", hex(gp.sched.lr), " ctxt:", gp.sched.ctxt, "}\n")
 
 		thisg.m.traceback = 2 // Include runtime frames
-		traceback(morebuf.pc, morebuf.sp, morebuf.lr, gp)
+		traceback(morebuf.pc, morebuf.sp, gobufTracebackLR(&morebuf), gp)
 		throw("runtime: stack split at bad time")
 	}
 
@@ -1132,8 +1132,8 @@ func newstack() {
 	}
 	sp := gp.sched.sp
 	if goarch.ArchFamily == goarch.AMD64 || goarch.ArchFamily == goarch.I386 || goarch.ArchFamily == goarch.WASM {
-		// The call to morestack cost a word.
-		sp -= goarch.PtrSize
+		// The call to morestack pushes one return-PC slot.
+		sp -= retPCSize
 	}
 	if stackDebug >= 1 || sp < gp.stack.lo {
 		print("runtime: newstack sp=", hex(sp), " stack=[", hex(gp.stack.lo), ", ", hex(gp.stack.hi), "]\n",

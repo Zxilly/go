@@ -11,9 +11,8 @@ import (
 	"unsafe"
 )
 
-// GOARCH=wasm currently has 64 bits pointers, but the WebAssembly host expects
-// pointers to be 32 bits so we use this type alias to represent pointers in
-// structs and arrays passed as arguments to WASI functions.
+// uintptr32 is a pointer in the WASI host ABI. Both wasm and wasm32 use
+// 32-bit host pointers, even though Go pointers on wasm are 64 bits wide.
 //
 // Note that the use of an integer type prevents the compiler from tracking
 // pointers passed to WASI functions, so we must use KeepAlive to explicitly

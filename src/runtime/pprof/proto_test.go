@@ -76,11 +76,24 @@ func TestConvertCPUProfileNoSamples(t *testing.T) {
 	checkProfile(t, p, 2000*1000, periodType, sampleType, nil, "")
 }
 
+// The test profiles add up to four to these function PCs. Keep enough
+// resume points for those offsets on WebAssembly.
+//
 //go:noinline
-func f1() { f1() }
+func f1() {
+	f1()
+	f1()
+	f1()
+	f1()
+}
 
 //go:noinline
-func f2() { f2() }
+func f2() {
+	f2()
+	f2()
+	f2()
+	f2()
+}
 
 // testPCs returns two PCs and two corresponding memory mappings
 // to use in test profiles.

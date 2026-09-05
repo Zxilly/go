@@ -5,6 +5,7 @@
 package runtime
 
 import (
+	"internal/goarch"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -68,7 +69,7 @@ import (
 //
 // [default]: https://go.dev/doc/godebug#default
 func GOMAXPROCS(n int) int {
-	if GOARCH == "wasm" && n > 1 {
+	if goarch.IsWasmAny != 0 && n > 1 {
 		n = 1 // WebAssembly has no threads yet, so only one CPU is possible.
 	}
 

@@ -11,6 +11,7 @@ import "internal/abi"
 const WasmMemoryLimit = wasmMemoryLimit
 
 var WasmMemoryEnd = wasmMemoryEnd
+var WasmFuncName = fnName
 var WasmSysAllocRangeEnd = sysAllocRangeEnd
 
 func WasmSpanContains(base, limit, addr uintptr) bool {

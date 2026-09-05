@@ -590,8 +590,8 @@ type textsect struct {
 }
 
 // findfuncbucket is an array of these structures.
-// Each bucket represents 4096 bytes of the text segment.
-// Each subbucket represents 256 bytes of the text segment.
+// Each bucket normally represents 4096 bytes of text. On wasm32 it represents
+// 256 dense logical PC tokens. Every bucket has 16 equal subbuckets.
 // To find a function given a pc, locate the bucket and subbucket for
 // that pc. Add together the idx and subbucket value to obtain a
 // function index. Then scan the functab array starting at that
@@ -656,9 +656,10 @@ func moduledataverify1(datap *moduledata) {
 	max := datap.textAddr(datap.ftab[nftab].entryoff)
 	minpc := datap.minpc
 	maxpc := datap.maxpc
-	if GOARCH == "wasm" {
-		// On Wasm, the func table contains the function index, whereas
-		// the "PC" is 1<<63 + function index << 16 + block index.
+	if goarch.IsWasm != 0 {
+		// On GOARCH=wasm, the func table contains the function index, whereas
+		// the "PC" has the high uintptr bit set, followed by
+		// function index << 16 + block index.
 		// The max we got from the func table is of 1<<16 granularity,
 		// so we round it up.
 		maxpc = alignUp(maxpc, 1<<16)
@@ -696,8 +697,8 @@ func moduledataverify1(datap *moduledata) {
 //go:nosplit
 func (md *moduledata) textAddr(off32 uint32) uintptr {
 	off := uintptr(off32)
-	if GOARCH == "wasm" {
-		// On Wasm, a text offset (e.g. in the method table) is function index, whereas
+	if goarch.IsWasm != 0 {
+		// On GOARCH=wasm, a text offset (e.g. in the method table) is function index, whereas
 		// the "PC", relative to md.text, is function index << 16 + block index.
 		off <<= 16
 	}
@@ -710,7 +711,7 @@ func (md *moduledata) textAddr(off32 uint32) uintptr {
 				break
 			}
 		}
-		if res > md.etext && GOARCH != "wasm" { // on wasm, functions do not live in the same address space as the linear memory
+		if res > md.etext && goarch.IsWasm == 0 { // on GOARCH=wasm, functions do not live in the same address space as linear memory
 			println("runtime: textAddr", hex(res), "out of range", hex(md.text), "-", hex(md.etext))
 			throw("runtime: text offset out of range")
 		}
@@ -726,14 +727,14 @@ func (md *moduledata) textAddr(off32 uint32) uintptr {
 //go:nosplit
 func (md *moduledata) textOff(pc uintptr) (uint32, bool) {
 	off := pc - md.text
-	if GOARCH == "wasm" {
-		// On Wasm, the func table contains the function index, whereas
+	if goarch.IsWasm != 0 {
+		// On GOARCH=wasm, the func table contains the function index, whereas
 		// the "PC", relative to md.text, is function index << 16 + block index.
 		off >>= 16
 	}
 	res := uint32(off)
 	if len(md.textsectmap) > 1 {
-		if GOARCH == "wasm" {
+		if goarch.IsWasmAny != 0 {
 			fatal("unexpected multiple text sections on Wasm")
 		}
 		for i, sect := range md.textsectmap {
@@ -934,13 +935,17 @@ func findfunc(pc uintptr) funcInfo {
 	}
 
 	x := uintptr(pcOff) + datap.text - datap.minpc // TODO: are datap.text and datap.minpc always equal?
-	if GOARCH == "wasm" {
-		// On Wasm, pcOff is the function index, whereas the "PC",
+	if goarch.IsWasm != 0 {
+		// On GOARCH=wasm, pcOff is the function index, whereas the "PC",
 		// relative to datap.text, is function index << 16 + block index.
 		x = uintptr(pcOff)<<16 + datap.text - datap.minpc
 	}
-	b := x / abi.FuncTabBucketSize
-	i := x % abi.FuncTabBucketSize / (abi.FuncTabBucketSize / nsub)
+	bucketSize := uintptr(abi.FuncTabBucketSize)
+	if goarch.IsWasm32 != 0 {
+		bucketSize = abi.FuncTabBucketSizeWasm32
+	}
+	b := x / bucketSize
+	i := x % bucketSize / (bucketSize / nsub)
 
 	ffb := (*findfuncbucket)(add(unsafe.Pointer(datap.findfunctab), b*unsafe.Sizeof(findfuncbucket{})))
 	idx := ffb.idx + uint32(ffb.subbuckets[i])

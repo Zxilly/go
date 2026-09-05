@@ -297,6 +297,8 @@ func (p *Parser) pseudo(word string, operands [][]lex.Token) bool {
 		p.asmData(operands)
 	case "FUNCDATA":
 		p.asmFuncData(operands)
+	case "FUNCPTR":
+		p.asmFuncPtr(operands)
 	case "GLOBL":
 		p.asmGlobl(operands)
 	case "PCDATA":
@@ -329,9 +331,10 @@ func (p *Parser) symDefRef(w io.Writer, word string, operands [][]lex.Token) {
 		return
 	case "GLOBL", "PCDATA":
 		// No text definitions or symbol references.
-	case "DATA", "FUNCDATA":
+	case "DATA", "FUNCDATA", "FUNCPTR":
 		// For DATA, operands[0] is defined symbol.
 		// For FUNCDATA, operands[0] is an immediate constant.
+		// For FUNCPTR, operands[0] is defined symbol.
 		// Remaining operands may have references.
 		if len(operands) < 2 {
 			return

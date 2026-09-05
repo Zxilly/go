@@ -71,7 +71,7 @@ func genhashSig(sig string) *obj.LSym {
 				memhashvarlen = typecheck.LookupRuntimeFunc("memhash_varlen")
 			}
 			ot := 0
-			ot = objw.SymPtr(closure, ot, memhashvarlen, 0)
+			ot = objw.SymFuncPtr(closure, ot, memhashvarlen)
 			ot = objw.Uintptr(closure, ot, uint64(n)) // size encoded in closue
 			objw.Global(closure, int32(ot), obj.DUPOK|obj.RODATA)
 			return closure
@@ -86,7 +86,7 @@ func genhashSig(sig string) *obj.LSym {
 
 	// Build closure. It doesn't close over any variables, so
 	// it contains just the function pointer.
-	objw.SymPtr(closure, 0, fn.Linksym(), 0)
+	objw.SymFuncPtr(closure, 0, fn.Linksym())
 	objw.Global(closure, int32(types.PtrSize), obj.DUPOK|obj.RODATA)
 	return closure
 }
@@ -228,7 +228,7 @@ func sysClosure(name string) *obj.LSym {
 	s := typecheck.LookupRuntimeVar(name + "·f")
 	if len(s.P) == 0 {
 		f := typecheck.LookupRuntimeFunc(name)
-		objw.SymPtr(s, 0, f, 0)
+		objw.SymFuncPtr(s, 0, f)
 		objw.Global(s, int32(types.PtrSize), obj.DUPOK|obj.RODATA)
 	}
 	return s
@@ -307,7 +307,7 @@ func geneqSig(sig string) *obj.LSym {
 				memequalvarlen = typecheck.LookupRuntimeFunc("memequal_varlen")
 			}
 			ot := 0
-			ot = objw.SymPtr(closure, ot, memequalvarlen, 0)
+			ot = objw.SymFuncPtr(closure, ot, memequalvarlen)
 			ot = objw.Uintptr(closure, ot, uint64(n))
 			objw.Global(closure, int32(ot), obj.DUPOK|obj.RODATA)
 			return closure
@@ -321,7 +321,7 @@ func geneqSig(sig string) *obj.LSym {
 	fn := eqFunc(sig)
 
 	// Generate a closure which points at the function we just generated.
-	objw.SymPtr(closure, 0, fn.Linksym(), 0)
+	objw.SymFuncPtr(closure, 0, fn.Linksym())
 	objw.Global(closure, int32(types.PtrSize), obj.DUPOK|obj.RODATA)
 	return closure
 }

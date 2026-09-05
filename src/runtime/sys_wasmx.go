@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build wasm || wasm32
+
 package runtime
 
 import (
@@ -24,14 +26,20 @@ func wasmTruncU()
 //go:wasmimport gojs runtime.wasmExit
 func wasmExit(code int32)
 
-// adjust Gobuf as it if executed a call to fn with context ctxt
+// adjust Gobuf as if it executed a call to fn with context ctxt
 // and then stopped before the first instruction in fn.
 func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {
-	sp := buf.sp
-	sp -= goarch.PtrSize
-	*(*uintptr)(unsafe.Pointer(sp)) = buf.pc
+	sp := buf.sp - retPCSize
+	pc := uint64(buf.pc)
+	if goarch.IsWasm32 != 0 {
+		pc |= uint64(buf.lr) << 32
+	}
+	*(*uint64)(unsafe.Pointer(sp)) = pc
 	buf.sp = sp
-	buf.pc = uintptr(fn)
+	buf.pc = funcHandleToPC(uintptr(fn))
+	if goarch.IsWasm32 != 0 {
+		buf.lr = uintptr(fn)
+	}
 	buf.ctxt = ctxt
 }
 

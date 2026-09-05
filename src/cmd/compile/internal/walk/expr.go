@@ -602,8 +602,13 @@ func walkCall(n *ir.CallExpr, init *ir.Nodes) ir.Node {
 		if n.Type() != types.Types[types.TUINTPTR] {
 			base.FatalfAt(n.Pos(), "FuncPC intrinsic should return uintptr, got %v", n.Type()) // as expected by typecheck.FuncPC.
 		}
-		n := ir.FuncPC(n.Pos(), arg, wantABI)
-		return walkExpr(n, init)
+		pc := ir.FuncPC(n.Pos(), arg, wantABI)
+		if buildcfg.GOARCH == "wasm32" && ir.IsIfaceOfFunc(arg) == nil {
+			// FuncPCABIInternal returns a logical entry PC. Convert the
+			// call_indirect table index stored in a wasm32 function value.
+			return mkcall("wasmFuncPC", types.Types[types.TUINTPTR], init, pc)
+		}
+		return walkExpr(pc, init)
 	}
 
 	if n.Op() == ir.OCALLFUNC {

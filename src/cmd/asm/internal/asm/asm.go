@@ -273,6 +273,37 @@ func (p *Parser) asmData(operands [][]lex.Token) {
 	}
 }
 
+// asmFuncPtr assembles a FUNCPTR pseudo-op.
+// FUNCPTR runtime·mainPC(SB), $runtime·main(SB)
+func (p *Parser) asmFuncPtr(operands [][]lex.Token) {
+	if len(operands) != 2 {
+		p.errorf("expect two operands for FUNCPTR")
+		return
+	}
+
+	nameAddr := p.address(operands[0])
+	if !p.validSymbol("FUNCPTR", &nameAddr, true) {
+		return
+	}
+	valueAddr := p.address(operands[1])
+	if valueAddr.Type != obj.TYPE_ADDR {
+		p.errorf("FUNCPTR value must be a function address")
+		return
+	}
+	if !p.validSymbol("FUNCPTR", &valueAddr, false) {
+		return
+	}
+
+	name := symbolName(&nameAddr)
+	size := int64(p.arch.PtrSize)
+	if lastAddr, ok := p.dataAddr[name]; ok && nameAddr.Offset < lastAddr {
+		p.errorf("overlapping DATA entry for %s", name)
+		return
+	}
+	p.dataAddr[name] = nameAddr.Offset + size
+	nameAddr.Sym.WriteFuncPtr(p.ctxt, nameAddr.Offset, valueAddr.Sym)
+}
+
 // asmGlobl assembles a GLOBL pseudo-op.
 // GLOBL shifts<>(SB),8,$256
 // GLOBL shifts<>(SB),$256

@@ -9,6 +9,7 @@ import (
 	"cmd/internal/obj"
 	"cmd/internal/obj/wasm"
 	"cmd/internal/objabi"
+	"cmd/internal/sys"
 	"cmd/link/internal/ld"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
@@ -26,6 +27,17 @@ const (
 	V128 = 0x7B
 )
 
+var globalRegs = [...]byte{
+	I32, // 0: SP
+	I64, // 1: CTXT
+	I64, // 2: g
+	I64, // 3: RET0
+	I64, // 4: RET1
+	I64, // 5: RET2
+	I64, // 6: RET3
+	I32, // 7: PAUSE
+}
+
 const (
 	sectionCustom   = 0
 	sectionType     = 1
@@ -41,7 +53,37 @@ const (
 	sectionData     = 11
 )
 
-func gentext(ctxt *ld.Link, ldr *loader.Loader) {
+func gentext(*ld.Link, *loader.Loader) {}
+
+func prepareText(ctxt *ld.Link, ldr *loader.Loader) {
+	if ctxt.Arch.PtrSize != 4 {
+		return
+	}
+
+	ctxt.WasmFuncIndex = make(map[loader.Sym]uint32, len(ctxt.Textp))
+	entries := ldr.CreateSymForUpdate("runtime.wasmFuncEntry", 0)
+	entries.SetType(sym.SRODATA)
+	entries.SetAlign(4)
+	entries.AddUint32(ctxt.Arch, 0) // table handle 0 is the nil sentinel
+	for i, fn := range ctxt.Textp {
+		ctxt.WasmFuncIndex[fn] = uint32(i + 1)
+		entries.AddAddrPlus4(ctxt.Arch, fn, 0)
+	}
+
+	count := ldr.CreateSymForUpdate("runtime.wasmFuncCountData", 0)
+	count.SetType(sym.SRODATA)
+	count.SetAlign(4)
+	count.AddUint32(ctxt.Arch, uint32(len(ctxt.Textp)))
+
+	addHandle := func(name, target string) {
+		s := ldr.CreateSymForUpdate(name, 0)
+		s.SetType(sym.SRODATA)
+		s.SetAlign(4)
+		s.AddSymRef(ctxt.Arch, ldr.Lookup(target, 0), 0, objabi.R_WASMFCALL, 4)
+	}
+	addHandle("runtime.wasmMstartF", "runtime.mstart")
+	addHandle("runtime.wasmSystemstackSwitchF", "runtime.systemstack_switch")
+	addHandle("runtime.wasmGoexitF", "runtime.goexit")
 }
 
 type wasmFunc struct {
@@ -71,7 +113,7 @@ var wasmFuncTypes = map[string]*wasmFuncType{
 	"wasm_export_resume":      {Params: []byte{}},                                         //
 	"wasm_export_getsp":       {Results: []byte{I32}},                                     // sp
 	"wasm_pc_f_loop":          {Params: []byte{}},                                         //
-	"wasm_pc_f_loop_export":   {Params: []byte{I32}},                                      // pc_f
+	"wasm_pc_f_loop_export":   {Params: []byte{I32}},                                      // stop PC_F or logical PC token
 	"runtime.wasmDiv":         {Params: []byte{I64, I64}, Results: []byte{I64}},           // x, y -> x/y
 	"runtime.wasmTruncS":      {Params: []byte{F64}, Results: []byte{I64}},                // x -> int(x)
 	"runtime.wasmTruncU":      {Params: []byte{F64}, Results: []byte{I64}},                // x -> uint(x)
@@ -91,27 +133,86 @@ var wasmFuncTypes = map[string]*wasmFuncType{
 	"memchr":                  {Params: []byte{I32, I32, I32}, Results: []byte{I32}},      // s, c, len -> index
 }
 
-// pcBase is the base value for PCs on Wasm.
-// We set the highest bit, so PCs are distinct from data addresses.
-const pcBase = -1 << 63
+const legacyWasmPCBase = -1 << 63
 
-func assignAddress(ldr *loader.Loader, sect *sym.Section, n int, s loader.Sym, va uint64, isTramp bool) (*sym.Section, int, uint64) {
+// pcBase returns the base value for PCs on arch. GOARCH=wasm uses the high bit
+// to distinguish PCs from data addresses. wasm32 uses a dense token range at
+// the start of static linear memory; data and the heap are laid out after it.
+func pcBase(arch *sys.Arch) int64 {
+	if arch.PtrSize == 4 {
+		return ld.WasmMinDataAddr
+	}
+	return legacyWasmPCBase
+}
+
+func nextFuncAddress(arch *sys.Arch, pc, size uint64) (uint64, bool) {
+	if arch.PtrSize == 8 {
+		return pc + 1<<16, true
+	}
+	if size == 0 {
+		size = 1
+	}
+	next := pc + size
+	if next < pc || next >= 1<<32 {
+		return 0, false
+	}
+	return next, true
+}
+
+func wasmRelocValue(entry, add int64, size uint8) int64 {
+	value := entry + add
+	if size == 4 {
+		return int64(int32(value))
+	}
+	return value
+}
+
+// wasmPCRelocValue returns the SLEB value for a continuation relocation. A
+// wasm32 continuation occupies an 8-byte PC slot: its low word is
+// the logical PC token and its high word is the PC_F table handle.
+func wasmPCRelocValue(arch *sys.Arch, entry, add int64, size uint8, handle uint32) int64 {
+	value := entry + add
+	if arch.PtrSize == 4 && size == 8 {
+		return int64(uint64(handle)<<32 | uint64(uint32(value)))
+	}
+	return wasmRelocValue(entry, add, size)
+}
+
+func assignAddress(arch *sys.Arch, ldr *loader.Loader, sect *sym.Section, n int, s loader.Sym, va uint64, isTramp bool) (*sym.Section, int, uint64) {
 	// WebAssembly functions do not live in the same address space as the linear memory.
 	// Instead, WebAssembly automatically assigns indices. Imported functions (section "import")
 	// have indices 0 to n. They are followed by native functions (sections "function" and "code")
 	// with indices n+1 and following.
 	//
-	// The following rules describe how wasm handles function indices and addresses:
-	//   PC_F = WebAssembly function index (not including the imports)
-	//   s.Value = PC = pcBase + PC_F<<16 + PC_B
+	// On GOARCH=wasm, s.Value is 1<<63 + PC_F<<16. On wasm32, s.Value
+	// is a logical PC. Each function has SymSize(s) consecutive PC tokens,
+	// so s.Value+PC_B identifies a resume point. A separate
+	// PC_F identifies the function's call_indirect table entry.
 	//
-	// The field "s.Value" corresponds to the concept of PC at runtime.
-	// However, there is no PC register, only PC_F and PC_B. PC_F denotes the function,
-	// PC_B the resume point inside of that function. The entry of the function has PC_B = 0.
+	// The field s.Value corresponds to the runtime PC. WebAssembly has no PC
+	// register: PC_B selects a resume block and PC_F selects the function body.
+	size := uint64(max(ldr.SymSize(s), 1))
+	next, ok := nextFuncAddress(arch, va, size)
+	if !ok {
+		ldr.Errorf(s, "wasm32 logical PC space exhausted")
+		return sect, n, va
+	}
 	ldr.SetSymSect(s, sect)
 	ldr.SetSymValue(s, int64(va)) // va already includes pcBase (through FlagTextAddr)
-	va += 1 << 16                 // increment PC_F
-	return sect, n, va
+	return sect, n, next
+}
+
+func wasmFuncHandle(ctxt *ld.Link, ldr *loader.Loader, s loader.Sym) (uint32, bool) {
+	if handle, ok := ctxt.WasmFuncIndex[s]; ok {
+		return handle, true
+	}
+	value := ldr.SymValue(s)
+	for fn, handle := range ctxt.WasmFuncIndex {
+		if ldr.SymValue(fn) == value {
+			return handle, true
+		}
+	}
+	return 0, false
 }
 
 type wasmDataSect struct {
@@ -182,6 +283,10 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	// collect functions with WebAssembly body
 	var buildid []byte
 	fns := make([]*wasmFunc, len(ctxt.Textp))
+	funcIndexes := make(map[int64]uint32, len(ctxt.Textp))
+	for i, fn := range ctxt.Textp {
+		funcIndexes[ldr.SymValue(fn)] = uint32(i)
+	}
 	for i, fn := range ctxt.Textp {
 		wfn := new(bytes.Buffer)
 		if ldr.SymName(fn) == "go:buildid" {
@@ -204,9 +309,32 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 				rs := r.Sym()
 				switch r.Type() {
 				case objabi.R_ADDR:
-					writeSleb128(wfn, ldr.SymValue(rs)+r.Add())
+					writeSleb128(wfn, wasmRelocValue(ldr.SymValue(rs), r.Add(), r.Siz()))
+				case objabi.R_WASMPC:
+					var handle uint32
+					if ctxt.Arch.PtrSize == 4 {
+						var ok bool
+						handle, ok = wasmFuncHandle(ctxt, ldr, rs)
+						if !ok {
+							ldr.Errorf(fn, "continuation target is not a defined WebAssembly function: %s", ldr.SymName(rs))
+							continue
+						}
+					}
+					writeSleb128(wfn, wasmPCRelocValue(ctxt.Arch, ldr.SymValue(rs), r.Add(), r.Siz(), handle))
+				case objabi.R_WASMFCALL:
+					handle, ok := wasmFuncHandle(ctxt, ldr, rs)
+					if !ok {
+						ldr.Errorf(fn, "function handle target is not a defined WebAssembly function: %s", ldr.SymName(rs))
+						continue
+					}
+					writeSleb128(wfn, int64(handle))
 				case objabi.R_CALL:
-					writeSleb128(wfn, int64(len(hostImports))+int64(uint32(uint64(ldr.SymValue(rs))>>16)))
+					idx, ok := funcIndexes[ldr.SymValue(rs)]
+					if !ok {
+						ldr.Errorf(fn, "direct call target is not a defined WebAssembly function: %s", ldr.SymName(rs))
+						continue
+					}
+					writeSleb128(wfn, int64(len(hostImports))+int64(idx))
 				case objabi.R_WASMIMPORT:
 					writeSleb128(wfn, hostImportMap[rs])
 				default:
@@ -246,11 +374,15 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	writeTypeSec(ctxt, types)
 	writeImportSec(ctxt, hostImports)
 	writeFunctionSec(ctxt, fns)
-	writeTableSec(ctxt, fns)
+	tableOffset := uint32(0)
+	if ctxt.Arch.PtrSize == 4 {
+		tableOffset = 1 // zero is the nil function handle
+	}
+	writeTableSec(ctxt, int(tableOffset)+len(fns))
 	writeMemorySec(ctxt, ldr)
 	writeGlobalSec(ctxt)
-	writeExportSec(ctxt, ldr, len(hostImports))
-	writeElementSec(ctxt, uint64(len(hostImports)), uint64(len(fns)))
+	writeExportSec(ctxt, ldr, len(hostImports), funcIndexes)
+	writeElementSec(ctxt, uint64(len(hostImports)), tableOffset, len(fns))
 	writeCodeSec(ctxt, fns)
 	writeDataSec(ctxt)
 	writeProducerSec(ctxt)
@@ -348,14 +480,13 @@ func writeFunctionSec(ctxt *ld.Link, fns []*wasmFunc) {
 // writeTableSec writes the section that declares tables. Currently there is only a single table
 // that is used by the CallIndirect operation to dynamically call any function.
 // The contents of the table get initialized by the "element" section.
-func writeTableSec(ctxt *ld.Link, fns []*wasmFunc) {
+func writeTableSec(ctxt *ld.Link, numElements int) {
 	sizeOffset := writeSecHeader(ctxt, sectionTable)
 
-	numElements := uint64(len(fns))
-	writeUleb128(ctxt.Out, 1)           // number of tables
-	ctxt.Out.WriteByte(0x70)            // type: anyfunc
-	ctxt.Out.WriteByte(0x00)            // no max
-	writeUleb128(ctxt.Out, numElements) // min
+	writeUleb128(ctxt.Out, 1)                   // number of tables
+	ctxt.Out.WriteByte(0x70)                    // type: anyfunc
+	ctxt.Out.WriteByte(0x00)                    // no max
+	writeUleb128(ctxt.Out, uint64(numElements)) // min
 
 	writeSecSize(ctxt, sizeOffset)
 }
@@ -381,17 +512,6 @@ func writeMemorySec(ctxt *ld.Link, ldr *loader.Loader) {
 func writeGlobalSec(ctxt *ld.Link) {
 	sizeOffset := writeSecHeader(ctxt, sectionGlobal)
 
-	globalRegs := []byte{
-		I32, // 0: SP
-		I64, // 1: CTXT
-		I64, // 2: g
-		I64, // 3: RET0
-		I64, // 4: RET1
-		I64, // 5: RET2
-		I64, // 6: RET3
-		I32, // 7: PAUSE
-	}
-
 	writeUleb128(ctxt.Out, uint64(len(globalRegs))) // number of globals
 
 	for _, typ := range globalRegs {
@@ -412,8 +532,15 @@ func writeGlobalSec(ctxt *ld.Link) {
 // writeExportSec writes the section that declares exports.
 // Exports can be accessed by the WebAssembly host, usually JavaScript.
 // The wasm_export_* functions and the linear memory get exported.
-func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
+func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int, funcIndexes map[int64]uint32) {
 	sizeOffset := writeSecHeader(ctxt, sectionExport)
+	funcIndex := func(s loader.Sym) uint32 {
+		idx, ok := funcIndexes[ldr.SymValue(s)]
+		if !ok {
+			ldr.Errorf(s, "export is not a defined WebAssembly function")
+		}
+		return uint32(lenHostImports) + idx
+	}
 
 	switch buildcfg.GOOS {
 	case "wasip1":
@@ -431,12 +558,12 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 		if s == 0 {
 			ld.Errorf("export symbol %s not defined", entry)
 		}
-		idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+		idx := funcIndex(s)
 		writeName(ctxt.Out, entryExpName)   // the wasi entrypoint
 		ctxt.Out.WriteByte(0x00)            // func export
 		writeUleb128(ctxt.Out, uint64(idx)) // funcidx
 		for _, s := range ldr.WasmExports {
-			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			idx := funcIndex(s)
 			writeName(ctxt.Out, ldr.SymName(s))
 			ctxt.Out.WriteByte(0x00)            // func export
 			writeUleb128(ctxt.Out, uint64(idx)) // funcidx
@@ -451,13 +578,13 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 			if s == 0 {
 				ld.Errorf("export symbol %s not defined", "wasm_export_"+name)
 			}
-			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			idx := funcIndex(s)
 			writeName(ctxt.Out, name)           // inst.exports.run/resume/getsp in wasm_exec.js
 			ctxt.Out.WriteByte(0x00)            // func export
 			writeUleb128(ctxt.Out, uint64(idx)) // funcidx
 		}
 		for _, s := range ldr.WasmExports {
-			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			idx := funcIndex(s)
 			writeName(ctxt.Out, ldr.SymName(s))
 			ctxt.Out.WriteByte(0x00)            // func export
 			writeUleb128(ctxt.Out, uint64(idx)) // funcidx
@@ -473,20 +600,20 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 }
 
 // writeElementSec writes the section that initializes the tables declared by the "table" section.
-// The table for CallIndirect gets initialized in a very simple way so that each table index (PC_F value)
-// maps linearly to the function index (numImports + PC_F).
-func writeElementSec(ctxt *ld.Link, numImports, numFns uint64) {
+// Handles are assigned after text ordering in prepareText, so table entries
+// follow the defined-function order. wasm32 leaves slot 0 for the nil handle.
+func writeElementSec(ctxt *ld.Link, numImports uint64, tableOffset uint32, numFns int) {
 	sizeOffset := writeSecHeader(ctxt, sectionElement)
 
 	writeUleb128(ctxt.Out, 1) // number of element segments
 
 	writeUleb128(ctxt.Out, 0) // tableidx
-	writeI32Const(ctxt.Out, 0)
+	writeI32Const(ctxt.Out, int32(tableOffset))
 	ctxt.Out.WriteByte(0x0b) // end
 
-	writeUleb128(ctxt.Out, numFns) // number of entries
-	for i := uint64(0); i < numFns; i++ {
-		writeUleb128(ctxt.Out, numImports+i)
+	writeUleb128(ctxt.Out, uint64(numFns)) // number of entries
+	for i := range numFns {
+		writeUleb128(ctxt.Out, numImports+uint64(i))
 	}
 
 	writeSecSize(ctxt, sizeOffset)

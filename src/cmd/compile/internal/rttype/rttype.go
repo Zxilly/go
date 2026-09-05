@@ -196,11 +196,13 @@ func (c Cursor) WritePtr(target *obj.LSym) {
 		objw.SymPtr(c.lsym, int(c.offset), target, 0)
 	}
 }
-func (c Cursor) WritePtrWeak(target *obj.LSym) {
-	if c.typ.Kind() != types.TUINTPTR {
-		base.Fatalf("can't write ptr, it has kind %s", c.typ.Kind())
+
+// WriteFuncPtrWeak writes a weak code word of a function value.
+func (c Cursor) WriteFuncPtrWeak(target *obj.LSym) {
+	if c.typ.Size() != int64(types.PtrSize) {
+		base.Fatalf("can't write weak func ptr, it has size %d", c.typ.Size())
 	}
-	objw.SymPtrWeak(c.lsym, int(c.offset), target, 0)
+	objw.SymFuncPtrWeak(c.lsym, int(c.offset), target)
 }
 func (c Cursor) WriteUintptr(val uint64) {
 	if c.typ.Kind() != types.TUINTPTR {

@@ -120,6 +120,21 @@ func devirtLECall(v *ssa.Value, sym *obj.LSym) *ssa.Value {
 	return v
 }
 
+// funcHandleSym returns the function named by a function-handle relocation
+// at off in sym, or nil if there is no such relocation.
+func funcHandleSym(sym ssa.Sym, off int64) *obj.LSym {
+	lsym := sym.(*obj.LSym)
+	if lsym.Type != objabi.SRODATA {
+		return nil
+	}
+	for _, r := range lsym.R {
+		if r.Type&^objabi.R_WEAK == objabi.R_WASMFCALL && int64(r.Off) == off && r.Add == 0 {
+			return r.Sym
+		}
+	}
+	return nil
+}
+
 // hasSmallRotate reports whether the architecture has rotate instructions
 // for sizes < 32-bit.  This is used to decide whether to promote some rotations.
 func hasSmallRotate(c *ssa.Config) bool {
