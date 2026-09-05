@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js || wasip1
+//go:build (js && wasm) || wasip1
 
 package testing
 
@@ -15,14 +15,14 @@ import (
 )
 
 // TODO(@musiol, @odeke-em): unify this code back into
-// example.go when js/wasm gets an os.Pipe implementation.
+// example.go when WebAssembly targets get an os.Pipe implementation.
 func runExample(eg InternalExample) (ok bool) {
 	if chatty.on {
 		fmt.Printf("%s=== RUN   %s\n", chatty.prefix(), eg.Name)
 	}
 
 	// Capture stdout to temporary file. We're not using
-	// os.Pipe because it is not supported on js/wasm.
+	// os.Pipe because it is not supported on WebAssembly targets.
 	stdout := os.Stdout
 	f := createTempFile(eg.Name)
 	os.Stdout = f
