@@ -1812,6 +1812,7 @@ var cgoEnabled = map[string]bool{
 	"ios/arm64":       true,
 	"ios/amd64":       true,
 	"js/wasm":         false,
+	"js/wasm32":       false,
 	"wasip1/wasm":     false,
 	"wasip1/wasm32":   false,
 	"netbsd/386":      true,

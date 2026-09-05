@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build js && (wasm || wasm32)
+
 #include "go_asm.h"
 #include "textflag.h"
 
@@ -23,13 +25,16 @@ TEXT wasm_export_run(SB),NOSPLIT,$0
 
 	Get SP
 	Get R0 // argc
-	I64ExtendI32U
-	I64Store $0
+	I32Store $0
 
 	Get SP
 	Get R1 // argv
+#ifdef GOARCH_wasm32
+	I32Store $4
+#else
 	I64ExtendI32U
 	I64Store $8
+#endif
 
 	I32Const $0 // entry PC_B
 	Call runtime·rt0_go(SB)

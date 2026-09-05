@@ -26,7 +26,7 @@ license that can be found in the LICENSE file.
 			};
 		}
 
-		const go = new Go();
+		const go = new Go(); // pointer ABI is detected from the module
 		let mod, inst;
 		WebAssembly.instantiateStreaming(fetch("test.wasm"), go.importObject).then((result) => {
 			mod = result.module;

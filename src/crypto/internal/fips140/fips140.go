@@ -48,7 +48,7 @@ func Supported() error {
 	}
 
 	// See EnableFIPS in cmd/internal/obj/fips.go for commentary.
-	// Also, js/wasm and windows/386 don't have good enough timers
+	// Also, js WebAssembly targets and windows/386 don't have good enough timers
 	// for the CPU jitter entropy source.
 	switch {
 	case runtime.GOARCH == "wasm", runtime.GOARCH == "wasm32",

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && (wasm || wasm32)
 
-// Package js gives access to the WebAssembly host environment when using the js/wasm architecture.
+// Package js gives access to the WebAssembly host environment on
+// js/wasm and js/wasm32.
 // Its API is based on JavaScript semantics.
 //
 // This package is EXPERIMENTAL. Its current scope is only to allow tests to run, but not yet to provide a

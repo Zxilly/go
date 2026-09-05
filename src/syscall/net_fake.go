@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Fake networking for js/wasm, wasip1/wasm, and wasip1/wasm32.
+// Fake networking for js/wasm, js/wasm32, wasip1/wasm, and wasip1/wasm32.
 
 //go:build js || wasip1
 

@@ -160,7 +160,7 @@ func SchedMetrics() {
 
 	// Be careful. We've entered a dangerous state for platforms
 	// that do not return back to the underlying system unless all
-	// goroutines are blocked, like js/wasm, since we have a bunch
+	// goroutines are blocked, like on js WebAssembly targets, since we have a bunch
 	// of runnable goroutines all spinning. We cannot write anything
 	// out.
 	if testenv.HasParallelism() {

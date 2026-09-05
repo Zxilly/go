@@ -149,7 +149,7 @@ func TestAfterFuncStarvation(t *testing.T) {
 	// Even if GOMAXPROCS=1, we expect the runtime to eventually schedule
 	// the AfterFunc goroutine instead of the runnable channel goroutine.
 	// However, in https://go.dev/issue/65178 this was observed to live-lock
-	// on wasip1 WebAssembly targets and js/wasm after <10000 runs.
+	// on wasip1 and js WebAssembly targets after <10000 runs.
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
 
 	var (

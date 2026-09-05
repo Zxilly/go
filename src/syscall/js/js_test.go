@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && (wasm || wasm32)
 
 // To run these tests:
 //
@@ -10,6 +10,7 @@
 // - Add /path/to/go/lib/wasm to your $PATH (so that "go test" can find
 //   "go_js_wasm_exec").
 // - GOOS=js GOARCH=wasm go test
+// - GOOS=js GOARCH=wasm32 go test
 //
 // See -exec in "go help test", and "go help run" for details.
 
@@ -19,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"strconv"
 	"syscall/js"
 	"testing"
 )
@@ -177,10 +179,12 @@ func TestIntConversion(t *testing.T) {
 	testIntConversion(t, -1)
 	testIntConversion(t, 1<<20)
 	testIntConversion(t, -1<<20)
-	testIntConversion(t, 1<<40)
-	testIntConversion(t, -1<<40)
-	testIntConversion(t, 1<<60)
-	testIntConversion(t, -1<<60)
+	if strconv.IntSize == 64 {
+		// These values only fit in a 64-bit int.
+		for _, want := range []int64{1 << 40, -1 << 40, 1 << 60, -1 << 60} {
+			testIntConversion(t, int(want))
+		}
+	}
 }
 
 func testIntConversion(t *testing.T, want int) {
@@ -771,5 +775,22 @@ func TestGlobal(t *testing.T) {
 
 	if got := ident.Invoke(js.Global()); !got.Equal(js.Global()) {
 		t.Errorf("got %#v, want %#v", got, js.Global())
+	}
+}
+
+func TestNegativeIndex(t *testing.T) {
+	obj := js.Global().Get("Object").New()
+	obj.Set("-1", "signed")
+	obj.Set("4294967295", "unsigned")
+	if got := obj.Index(-1).String(); got != "signed" {
+		t.Fatalf("Index(-1) = %q, want signed property", got)
+	}
+
+	obj.SetIndex(-2, "set-signed")
+	if got := obj.Get("-2").String(); got != "set-signed" {
+		t.Fatalf("SetIndex(-2) set %q, want signed property", got)
+	}
+	if got := obj.Get("4294967294"); !got.IsUndefined() {
+		t.Fatalf("SetIndex(-2) also set unsigned property to %v", got)
 	}
 }

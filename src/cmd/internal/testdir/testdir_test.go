@@ -1632,10 +1632,8 @@ func (t test) wantedAsmOpcodes(fn string) asmChecks {
 				os, arch, subarch = "linux", archspec[0], archspec[1][1:]
 			default: // 1 component: "386"
 				os, arch, subarch = "linux", archspec[0], ""
-				if arch == "wasm" {
+				if arch == "wasm" || arch == "wasm32" {
 					os = "js"
-				} else if arch == "wasm32" {
-					os = "wasip1"
 				}
 			}
 

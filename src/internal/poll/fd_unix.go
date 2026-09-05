@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build unix || (js && wasm) || wasip1
+//go:build unix || (js && (wasm || wasm32)) || wasip1
 
 package poll
 
@@ -663,7 +663,7 @@ func DupCloseOnExec(fd int) (int, string, error) {
 		}
 		switch err {
 		case syscall.EINVAL, syscall.ENOSYS:
-			// Old kernel, or js/wasm (which returns
+			// Old kernel, or a js WebAssembly target (which returns
 			// ENOSYS). Fall back to the portable way from
 			// now on.
 			dupCloexecUnsupported.Store(true)

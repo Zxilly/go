@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && (wasm || wasm32)
 
 package syscall
 
@@ -93,7 +93,7 @@ func Open(path string, openmode int, perm uint32) (int, error) {
 		flags |= nodeEXCL
 	}
 	if openmode&O_SYNC != 0 {
-		return 0, errors.New("syscall.Open: O_SYNC is not supported by js/wasm")
+		return 0, errors.New("syscall.Open: O_SYNC is not supported by js WebAssembly targets")
 	}
 	if openmode&O_DIRECTORY != 0 {
 		if nodeDIRECTORY != -1 {
