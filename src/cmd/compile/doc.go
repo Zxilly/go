@@ -329,6 +329,11 @@ by ``importmodule'' and ``importname''. For example,
 
 causes g to refer to the WebAssembly function f from module a_module.
 
+Calls to imported functions execute synchronously on the calling goroutine's
+thread. The directive does not notify the scheduler when a host call blocks.
+With GOWASM=threads or GOWASM=wasip1-threads, a blocking custom import can
+prevent scheduling and garbage collection from making progress.
+
 	//go:wasmexport exportname
 
 The //go:wasmexport directive is wasm-only and must be followed by a
@@ -340,6 +345,10 @@ For example,
 	func hWasm() { ... }
 
 make Go function hWasm available outside this WebAssembly module as h.
+
+In thread-enabled builds, an exported call remains on its originating host
+thread. Hosts must serialize external calls into each module instance;
+synchronous reentrant calls from an import are permitted.
 
 For both go:wasmimport and go:wasmexport,
 the types of parameters and return values to the Go function are translated to

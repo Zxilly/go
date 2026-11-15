@@ -720,7 +720,11 @@ Architecture-specific environment variables:
 		and https://github.com/riscv/riscv-profiles/blob/main/src/rva23-profile.adoc
 	GOWASM
 		For GOARCH=wasm, comma-separated list of experimental WebAssembly features to use.
-		Valid values are satconv, signext.
+		Valid values are satconv, signext, stackswitch, threads, wasip1-threads.
+		The threads feature requires GOOS=js and a host with Workers and
+		shared memory. The wasip1-threads feature requires GOOS=wasip1
+		and a host implementing the legacy WASI threads ABI.
+		Both can be combined with stackswitch.
 
 Environment variables for use with code coverage:
 
@@ -1027,8 +1031,10 @@ The defined architecture feature build tags are:
 	- For GOARCH=riscv64,
 	  GORISCV64=rva20u64, rva22u64 and rva23u64 correspond to the riscv64.rva20u64,
 	  riscv64.rva22u64 and riscv64.rva23u64 build tags.
-	- For GOARCH=wasm, GOWASM=satconv and signext
-	  correspond to the wasm.satconv and wasm.signext feature build tags.
+	- For GOARCH=wasm, GOWASM=satconv, signext, stackswitch, and threads
+	  correspond to the wasm.satconv, wasm.signext, wasm.stackswitch,
+	  and wasm.threads feature build tags.
+	  GOWASM=wasip1-threads also sets the wasm.threads build tag.
 
 For GOARCH=amd64, arm, ppc64, ppc64le, and riscv64, a particular feature level
 sets the feature build tags for all previous levels as well.
