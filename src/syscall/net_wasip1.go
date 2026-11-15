@@ -16,11 +16,11 @@ type sdflags = uint32
 
 //go:wasmimport wasi_snapshot_preview1 sock_accept
 //go:noescape
-func sock_accept(fd int32, flags fdflags, newfd *int32) Errno
+func raw_sock_accept(fd int32, flags fdflags, newfd *int32) Errno
 
 //go:wasmimport wasi_snapshot_preview1 sock_shutdown
 //go:noescape
-func sock_shutdown(fd int32, flags sdflags) Errno
+func raw_sock_shutdown(fd int32, flags sdflags) Errno
 
 func Socket(proto, sotype, unused int) (fd int, err error) {
 	return 0, ENOSYS
