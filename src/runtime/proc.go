@@ -1932,6 +1932,7 @@ func mstart1() {
 	gp.sched.bp = getcallerfp()
 
 	asminit()
+	wasmContEnsure(gp)
 	minit()
 
 	// Install signal handlers; after minit so that minit can
@@ -3347,6 +3348,7 @@ func gcstopm() {
 //go:yeswritebarrierrec
 func execute(gp *g, inheritTime bool) {
 	mp := getg().m
+	wasmContEnsure(gp)
 
 	if goroutineProfile.active {
 		// Make sure that gp has had its stack written out to the goroutine

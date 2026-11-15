@@ -12,3 +12,5 @@ package runtime
 type wasmContPerG struct{}
 
 func wasmContAlloc(gp *g) {}
+
+func wasmContEnsure(gp *g) {}

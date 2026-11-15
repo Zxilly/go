@@ -6,12 +6,13 @@
 
 // Continuation table for WebAssembly stack switching (GOWASM=stackswitch).
 //
-// With stack switching, a g's WebAssembly execution stack is a continuation,
+// A WebAssembly execution stack can be represented by a continuation,
 // a reference of type (ref null $cont). Reference values are opaque and
 // cannot be stored in linear memory, so they cannot live in a g. Instead the
 // linker declares a continuation table, wasm table wasmContTable, and every
-// g owns one slot of it, recorded in g.wasmCont.index. A slot holds the g's
-// suspended continuation, or null if the g has not started yet.
+// g reserves one slot of it, recorded in g.wasmCont.index. The slots are
+// currently null: the scheduler still uses the linear-memory stack and
+// unwinding trampoline. This is the table infrastructure for stack switching.
 //
 // m0.g0 is allocated statically rather than by malg, so its index is the zero
 // value: slot wasmContG0Slot belongs to it. malg gives every other g a slot
@@ -20,9 +21,14 @@
 // themselves, slots are never freed, so the table grows to the number of g's
 // ever allocated.
 //
-// wasm runs a single thread, so the allocation state below needs no locking.
+// With threads, slot numbers are shared, but each module instance has its
+// own continuation table. Ensure a slot exists in the current instance when
+// its goroutine starts running there. Continuation references themselves
+// cannot be transferred between instances through shared linear memory.
 
 package runtime
+
+import "internal/runtime/atomic"
 
 const (
 	// wasmContTable is the index of the continuation table among the
@@ -34,6 +40,9 @@ const (
 	// wasmContG0Slot is m0.g0's slot in the continuation table.
 	// Assembly refers to it as $const_wasmContG0Slot.
 	wasmContG0Slot = 0
+
+	// Slots and the assembly accessors use signed 32-bit indices.
+	wasmContMaxSize = 1<<31 - 1
 )
 
 // wasmContPerG is the per-g state of WebAssembly stack switching.
@@ -43,35 +52,45 @@ type wasmContPerG struct {
 	index int32
 }
 
-var (
-	wasmContLast int32 // the highest slot assigned by wasmContAlloc so far
-	wasmContSize int32 // the continuation table's size, as last read or grown
-)
+var wasmContLast atomic.Int32 // the highest slot assigned by wasmContAlloc so far
 
 // wasmContAlloc gives gp, which malg just allocated, the next unused slot of
 // the continuation table, growing the table if the slot does not fit.
 func wasmContAlloc(gp *g) {
-	slot := wasmContLast + 1
-	if slot >= wasmContSize {
-		wasmContGrow(slot)
+	slot := wasmContLast.Add(1)
+	if slot <= 0 || slot >= wasmContMaxSize {
+		throw("runtime: too many WebAssembly continuation slots")
 	}
-	wasmContLast = slot
 	gp.wasmCont.index = slot
+	wasmContEnsure(gp)
+}
+
+// wasmContEnsure makes gp's slot available in the current module instance.
+// In particular, allocation may have occurred on a different M. Do not cache
+// table.size in linear memory: that memory is shared across instances, while
+// the table is not. This function cannot migrate between instances mid-call.
+//
+//go:nosplit
+func wasmContEnsure(gp *g) {
+	wasmContGrow(gp.wasmCont.index)
 }
 
 // wasmContGrow grows the continuation table so that it has slot n. It at
 // least doubles the table and does not depend on the table's initial
 // size, which the linker sets.
+//
+//go:nosplit
 func wasmContGrow(n int32) {
 	size := wasmContTableSize()
 	if n >= size {
 		delta := max(size, n+1-size)
+		if delta > wasmContMaxSize-size {
+			delta = wasmContMaxSize - size
+		}
 		if wasmContTableGrow(delta) < 0 {
 			throw("runtime: cannot grow WebAssembly continuation table")
 		}
-		size += delta
 	}
-	wasmContSize = size
 }
 
 // Implemented in stackswitch_wasm.s.
