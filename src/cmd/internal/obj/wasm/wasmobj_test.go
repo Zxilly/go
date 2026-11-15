@@ -34,6 +34,7 @@ func TestWriteOpcode(t *testing.T) {
 		{AF64x2ConvertLowI32x4U, []byte{0xFD, 0xFF, 0x01}},         // index 0x0FF
 		{AI8x16RelaxedSwizzle, []byte{0xFD, 0x80, 0x02}},           // index 0x100
 		{AI32x4RelaxedDotI8x16I7x16AddS, []byte{0xFD, 0x93, 0x02}}, // index 0x113
+
 	}
 	var buf bytes.Buffer
 	for _, test := range tests {
@@ -42,5 +43,47 @@ func TestWriteOpcode(t *testing.T) {
 		if got := buf.Bytes(); !bytes.Equal(got, test.want) {
 			t.Errorf("writeOpcode(%v) = % x, want % x", test.as, got, test.want)
 		}
+	}
+}
+
+func TestAtomicMemoryArguments(t *testing.T) {
+	tests := []struct {
+		as   obj.As
+		want []byte
+	}{
+		{AMemoryAtomicNotify, []byte{0xFE, 0x00, 2, 0x80, 1}},
+		{AMemoryAtomicWait32, []byte{0xFE, 0x01, 2, 0x80, 1}},
+		{AMemoryAtomicWait64, []byte{0xFE, 0x02, 3, 0x80, 1}},
+		{AAtomicFence, []byte{0xFE, 0x03, 0}},
+		{AI32AtomicLoad, []byte{0xFE, 0x10, 2, 0x80, 1}},
+		{AI64AtomicLoad, []byte{0xFE, 0x11, 3, 0x80, 1}},
+		{AI32AtomicLoad8U, []byte{0xFE, 0x12, 0, 0x80, 1}},
+		{AI64AtomicLoad16U, []byte{0xFE, 0x15, 1, 0x80, 1}},
+		{AI64AtomicStore, []byte{0xFE, 0x18, 3, 0x80, 1}},
+		{AI32AtomicStore8, []byte{0xFE, 0x19, 0, 0x80, 1}},
+		{AI32AtomicRmwAdd, []byte{0xFE, 0x1E, 2, 0x80, 1}},
+		{AI64AtomicRmw32CmpxchgU, []byte{0xFE, 0x4E, 2, 0x80, 1}},
+	}
+	for _, test := range tests {
+		t.Run(test.as.String(), func(t *testing.T) {
+			ctxt := obj.Linknew(&Linkwasm)
+			// Use a function with the raw WebAssembly calling convention so
+			// there is no local SP initialization before the instruction.
+			s := &obj.LSym{Name: "runtime.wasmDiv"}
+			p := &obj.Prog{As: test.as}
+			offset := obj.Addr{Type: obj.TYPE_CONST, Offset: 128}
+			if unaryDst[test.as] {
+				p.To = offset
+			} else {
+				p.From = offset
+			}
+			s.NewFuncInfo().Text = p
+			assemble(ctxt, s, ctxt.NewProg)
+			want := append([]byte{0}, test.want...) // no locals
+			want = append(want, 0x0B)               // end
+			if !bytes.Equal(s.P, want) {
+				t.Fatalf("got % x, want % x", s.P, want)
+			}
+		})
 	}
 }

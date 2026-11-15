@@ -117,6 +117,14 @@ func rconv(r int) string {
 }
 
 var unaryDst = map[obj.As]bool{
+	AI32AtomicStore:   true,
+	AI64AtomicStore:   true,
+	AI32AtomicStore8:  true,
+	AI32AtomicStore16: true,
+	AI64AtomicStore8:  true,
+	AI64AtomicStore16: true,
+	AI64AtomicStore32: true,
+
 	ASet:          true,
 	ATee:          true,
 	ACall:         true,
@@ -1295,6 +1303,23 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 		writeOpcode(w, p.As)
 
+		if p.As >= AMemoryAtomicNotify && p.As <= AI64AtomicRmw32CmpxchgU {
+			if p.As == AAtomicFence {
+				w.WriteByte(0) // reserved
+				continue
+			}
+			offset := p.From
+			if unaryDst[p.As] {
+				offset = p.To
+			}
+			if offset.Type != obj.TYPE_CONST || offset.Offset < 0 || offset.Offset > math.MaxUint32 {
+				ctxt.Diag("bad atomic memory offset in %v", p)
+			}
+			writeUleb128(w, atomicAlign(p.As))
+			writeUleb128(w, uint64(offset.Offset))
+			continue
+		}
+
 		switch p.As {
 		case ABlock, ALoop, AIf:
 			if p.From.Offset != 0 {
@@ -1515,6 +1540,13 @@ func writeOpcode(w *bytes.Buffer, as obj.As) {
 		w.WriteByte(0xFD)
 		writeUleb128(w, uint64(as-AV128Load))
 
+	case as >= AMemoryAtomicNotify && as <= AAtomicFence:
+		w.WriteByte(0xFE)
+		writeUleb128(w, uint64(as-AMemoryAtomicNotify))
+	case as >= AI32AtomicLoad && as <= AI64AtomicRmw32CmpxchgU:
+		w.WriteByte(0xFE)
+		writeUleb128(w, uint64(as-AI32AtomicLoad)+0x10)
+
 	default:
 		panic(fmt.Sprintf("unexpected assembler op: %s", as))
 	}
@@ -1545,6 +1577,21 @@ func regType(reg int16) valueType {
 	default:
 		panic("invalid register")
 	}
+}
+
+// Atomic memory instructions require their natural alignment. Each group of
+// seven opcodes has the same sequence of access widths: 32, 64, 8, 16, 8, 16, 32.
+func atomicAlign(as obj.As) uint64 {
+	switch as {
+	case AMemoryAtomicNotify, AMemoryAtomicWait32:
+		return 2
+	case AMemoryAtomicWait64:
+		return 3
+	}
+	if as < AI32AtomicLoad || as > AI64AtomicRmw32CmpxchgU {
+		panic("atomicAlign: bad op")
+	}
+	return [...]uint64{2, 3, 0, 1, 0, 1, 2}[(as-AI32AtomicLoad)%7]
 }
 
 func align(as obj.As) uint64 {
