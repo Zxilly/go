@@ -1568,7 +1568,10 @@ func TestReadMetricsCleanups(t *testing.T) {
 }
 
 func TestReadMetricsFinalizers(t *testing.T) {
-	runtime.GC()                                                  // End any in-progress GC.
+	// Evict objects from both sync.Pool caches before measuring. In js/wasm,
+	// the test's verbose output creates JavaScript values with finalizers.
+	runtime.GC()
+	runtime.GC()
 	runtime.BlockUntilEmptyFinalizerQueue(int64(1 * time.Second)) // Flush any queued finalizers.
 
 	var before [2]metrics.Sample
