@@ -34,6 +34,7 @@ func main() { println(answer()) }
 	for _, tc := range []struct{ goos, feature, mode string }{
 		{"wasip1", "", "exe"},
 		{"wasip1", "wasip1-threads", "exe"},
+		{"js", "threads", "exe"},
 		{"wasip1", "wasip1-threads,stackswitch", "exe"},
 		{"wasip1", "wasip1-threads", "c-shared"},
 	} {

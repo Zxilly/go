@@ -99,6 +99,8 @@ func TestWasmThreads(t *testing.T) {
 	}{
 		{"wasip1", "wasip1-threads", "wasip1-threads", true},
 		{"wasip1", "wasip1-threads,stackswitch", "stackswitch,wasip1-threads", true},
+		{"js", "threads", "threads", true},
+		{"js", "threads,stackswitch", "stackswitch,threads", true},
 		{"js", "wasip1-threads", "", false},
 		{"wasip1", "threads", "", false},
 		{"js", "threads,wasip1-threads", "", false},

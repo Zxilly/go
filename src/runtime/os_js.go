@@ -24,10 +24,6 @@ func write1(fd uintptr, p unsafe.Pointer, n int32) int32 {
 //go:noescape
 func wasmWrite(fd uintptr, p unsafe.Pointer, n int32)
 
-func usleep(usec uint32) {
-	// TODO(neelance): implement usleep
-}
-
 //go:wasmimport gojs runtime.getRandomData
 //go:noescape
 func getRandomData(r []byte)

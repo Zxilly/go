@@ -82,6 +82,13 @@ stdout 'wasm.satconv wasm.signext wasm.threads'
 go env GOWASM
 stdout '^wasip1-threads$'
 
+env GOOS=js
+env GOWASM=threads
+go list -f '{{context.ToolTags}}'
+stdout 'wasm.satconv wasm.signext wasm.threads'
+go env GOWASM
+stdout '^threads$'
+
 env GOWASM=
 go list -f '{{context.ToolTags}}'
 ! stdout 'wasm.threads'

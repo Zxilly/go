@@ -215,6 +215,11 @@ func main() {
 
 	gcenable()
 	defaultGOMAXPROCSUpdateEnable() // don't STW before runtime initialized.
+	if GOOS == "js" && wasmThreads {
+		// Keep the JavaScript owner available for asynchronous host events.
+		// Package initialization may block while locked to its worker.
+		wasmStartMain()
+	}
 
 	// If we encountered a removed GODEBUG during startup we can panic now.
 	if k := invalidGODEBUG.key; k != "" {

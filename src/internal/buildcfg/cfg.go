@@ -360,6 +360,7 @@ func (f gowasmFeatures) String() string {
 }
 
 func gowasm() (f gowasmFeatures) {
+	var jsThreads bool
 	for opt := range strings.SplitSeq(envOr("GOWASM", ""), ",") {
 		switch opt {
 		case "satconv":
@@ -368,6 +369,9 @@ func gowasm() (f gowasmFeatures) {
 			// ignore, always enabled
 		case "stackswitch":
 			f.StackSwitch = true
+		case "threads":
+			f.Threads = true
+			jsThreads = true
 		case "wasip1-threads":
 			f.Threads = true
 			f.WASIP1Threads = true
@@ -377,9 +381,15 @@ func gowasm() (f gowasmFeatures) {
 			Error = fmt.Errorf("invalid GOWASM: no such feature %q", opt)
 		}
 	}
+	if jsThreads && f.WASIP1Threads {
+		Error = fmt.Errorf("GOWASM=threads and wasip1-threads select different hosts")
+		return
+	}
 	if GOARCH == "wasm" && f.Threads {
 		if f.WASIP1Threads && GOOS != "wasip1" {
 			Error = fmt.Errorf("GOWASM=wasip1-threads requires GOOS=wasip1")
+		} else if !f.WASIP1Threads && GOOS != "js" {
+			Error = fmt.Errorf("GOWASM=threads requires GOOS=js; use GOWASM=wasip1-threads for GOOS=wasip1")
 		}
 	}
 	return

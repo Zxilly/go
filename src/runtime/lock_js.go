@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build js && wasm
+//go:build js && wasm && !wasm.threads
 
 package runtime
 
@@ -11,7 +11,7 @@ import (
 	_ "unsafe" // for go:linkname
 )
 
-// js/wasm has no support for threads yet. There is no preemption.
+// The default js/wasm build has one execution thread and no preemption.
 
 const (
 	mutex_unlocked = 0
