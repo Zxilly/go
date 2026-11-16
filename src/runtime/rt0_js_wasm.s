@@ -41,6 +41,25 @@ TEXT wasm_export_run(SB),NOSPLIT,$0
 // wasm_export_resume gets called from JavaScript. It resumes the execution of Go code until it needs to wait for
 // an event.
 TEXT wasm_export_resume(SB),NOSPLIT,$0
+	// A threaded instance may have yielded to the host in syscall state.
+	// Restoring its P can suspend; keep a real Go return PC and use the
+	// export trampoline until wasmHostResume returns to this native frame.
+	Get SP
+	I32Const $8
+	I32Sub
+	Set SP
+	Get SP
+	I64Const $wasm_export_resume(SB)
+	I64Store $0
+	I32Const $0
+	Call runtime·wasmHostResume(SB)
+	If
+		I64Const $wasm_export_resume(SB)
+		I64Const $16
+		I64ShrU
+		I32WrapI64
+		Call wasm_pc_f_loop_export(SB)
+	End
 	I32Const $0
 	Call runtime·handleEvent(SB)
 	Drop

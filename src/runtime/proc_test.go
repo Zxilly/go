@@ -36,7 +36,7 @@ func perpetuumMobile() {
 }
 
 func TestStopTheWorldDeadlock(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 	if testing.Short() {
@@ -109,7 +109,7 @@ func TestYieldLocked(t *testing.T) {
 }
 
 func TestGoroutineParallelism(t *testing.T) {
-	if runtime.NumCPU() == 1 {
+	if runtime.NumCPU() == 1 && !runtime.WasmThreads {
 		// Takes too long, too easy to deadlock, etc.
 		t.Skip("skipping on uniprocessor")
 	}
@@ -158,7 +158,7 @@ func TestGoroutineParallelism2(t *testing.T) {
 }
 
 func testGoroutineParallelism2(t *testing.T, load, netpoll bool) {
-	if runtime.NumCPU() == 1 {
+	if runtime.NumCPU() == 1 && !runtime.WasmThreads {
 		// Takes too long, too easy to deadlock, etc.
 		t.Skip("skipping on uniprocessor")
 	}
@@ -249,7 +249,7 @@ func TestBlockLocked(t *testing.T) {
 }
 
 func TestTimerFairness(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 
@@ -279,7 +279,7 @@ func TestTimerFairness(t *testing.T) {
 }
 
 func TestTimerFairness2(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 
@@ -317,7 +317,7 @@ var preempt = func() int {
 }
 
 func TestPreemption(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 
@@ -344,7 +344,7 @@ func TestPreemption(t *testing.T) {
 }
 
 func TestPreemptionGC(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 
@@ -434,7 +434,7 @@ func TestNumGoroutine(t *testing.T) {
 }
 
 func TestPingPongHog(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 	if testing.Short() {
@@ -952,7 +952,7 @@ func TestStealOrder(t *testing.T) {
 }
 
 func TestLockOSThreadNesting(t *testing.T) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no threads on wasm yet")
 	}
 
@@ -1064,7 +1064,7 @@ func fakeSyscall(duration time.Duration) {
 
 // Check that a goroutine will be preempted if it is calling short system calls.
 func testPreemptionAfterSyscall(t *testing.T, syscallDuration time.Duration) {
-	if runtime.GOARCH == "wasm" {
+	if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 		t.Skip("no preemption on wasm yet")
 	}
 

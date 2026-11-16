@@ -182,9 +182,6 @@ TEXT runtime·asminit(SB), NOSPLIT, $0-0
 	// No per-thread init.
 	RET
 
-TEXT ·publicationBarrier(SB), NOSPLIT, $0-0
-	RET
-
 TEXT runtime·procyieldAsm(SB), NOSPLIT, $0-0 // FIXME
 	RET
 

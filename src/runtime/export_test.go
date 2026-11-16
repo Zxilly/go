@@ -30,6 +30,9 @@ var F64toint = f64toint
 var Entersyscall = entersyscall
 var Exitsyscall = exitsyscall
 var LockedOSThread = lockedOSThread
+
+const WasmThreads = wasmThreads
+
 var Xadduintptr = atomic.Xadduintptr
 
 var ReadRandomFailed = &readRandomFailed

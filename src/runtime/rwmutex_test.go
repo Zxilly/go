@@ -48,7 +48,7 @@ func doTestParallelReaders(numReaders int) {
 }
 
 func TestParallelRWMutexReaders(t *testing.T) {
-	if GOARCH == "wasm" {
+	if GOARCH == "wasm" && !WasmThreads {
 		t.Skip("wasm has no threads yet")
 	}
 	defer GOMAXPROCS(GOMAXPROCS(-1))

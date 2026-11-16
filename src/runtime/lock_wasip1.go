@@ -2,12 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build wasip1
+//go:build wasip1 && !wasm.threads
 
 package runtime
 
-// wasm has no support for threads yet. There is no preemption.
-// See proposal: https://github.com/WebAssembly/threads
+// The default wasip1/wasm build has one execution thread and no preemption.
 // Waiting for a mutex or timeout is implemented as a busy loop
 // while allowing other goroutines to run.
 

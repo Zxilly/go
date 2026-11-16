@@ -15,7 +15,12 @@ func osinit() {
 	initBloc()
 	blocMax = uintptr(currentMemory()) * physPageSize // record the initial linear memory size
 	numCPUStartup = getCPUCount()
-	getg().m.procid = 2
+	if wasmThreads {
+		// Host thread IDs are positive. Reserve zero for the initial thread.
+		getg().m.procid = 0
+	} else {
+		getg().m.procid = 2
+	}
 }
 
 func getCPUCount() int32 {
@@ -35,13 +40,7 @@ func sigpanic() {
 	panicmem()
 }
 
-// func exitThread(wait *uint32)
-// FIXME: wasm doesn't have atomic yet
 func exitThread(wait *atomic.Uint32)
-
-type mOS struct{}
-
-func osyield()
 
 //go:nosplit
 func osyield_no_g() {
@@ -107,13 +106,6 @@ func crash() {
 func initsig(preinit bool) {
 }
 
-// May run with m.p==nil, so write barriers are not allowed.
-//
-//go:nowritebarrier
-func newosproc(mp *m) {
-	throw("newosproc: not implemented")
-}
-
 // Do nothing on WASM platform, always return EPIPE to caller.
 //
 //go:linkname os_sigpipe os.sigpipe
@@ -139,7 +131,8 @@ const preemptMSupported = false
 func preemptM(gp *g) {
 	casfrom_Gscanstatus(gp, _Gscanrunning, _Grunning)
 
-	// No threads, so nothing to do.
+	// WebAssembly has no asynchronous preemption. The stack check in
+	// the target goroutine observes its preemption request.
 }
 
 // getfp returns the frame pointer register of its caller or 0 if not implemented.

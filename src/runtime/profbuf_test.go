@@ -217,10 +217,10 @@ func TestProfBufWakeup(t *testing.T) {
 	// different statuses we need to look for to determine whether the
 	// reader is blocked.
 	var waitStatus string
-	switch runtime.GOOS {
-	case "js":
+	switch {
+	case runtime.GOOS == "js" && !WasmThreads:
 		waitStatus = "waiting"
-	case "wasip1":
+	case runtime.GOOS == "wasip1" && !WasmThreads:
 		waitStatus = "runnable"
 	default:
 		waitStatus = "syscall"

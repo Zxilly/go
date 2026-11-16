@@ -279,6 +279,12 @@ func main() {
 	close(mainInitDoneChan)
 
 	needUnlock = false
+	if wasmThreads && (isarchive || islibrary) {
+		// Keep the initialization goroutine on this instance. Exported calls
+		// reuse it, while the scheduler and GC continue on worker instances.
+		wasmHostPause()
+		throw("wasm host pause returned")
+	}
 	unlockOSThread()
 
 	if isarchive || islibrary {
@@ -2951,7 +2957,7 @@ func newm1(mp *m) {
 //
 // The calling thread must itself be in a known-good state.
 func startTemplateThread() {
-	if GOARCH == "wasm" { // no threads on wasm yet
+	if GOARCH == "wasm" && !wasmThreads { // no threads in the default wasm build
 		return
 	}
 
@@ -4569,7 +4575,7 @@ func gdestroy(gp *g) {
 
 	dropg()
 
-	if GOARCH == "wasm" { // no threads yet on wasm
+	if GOARCH == "wasm" && !wasmThreads { // no threads in the default wasm build
 		gfput(pp, gp)
 		return
 	}
@@ -5664,8 +5670,8 @@ func Breakpoint() {
 //
 //go:nosplit
 func dolockOSThread() {
-	if GOARCH == "wasm" {
-		return // no threads on wasm yet
+	if GOARCH == "wasm" && !wasmThreads {
+		return // no threads in the default wasm build
 	}
 	gp := getg()
 	gp.m.lockedg.set(gp)
@@ -5716,8 +5722,8 @@ func lockOSThread() {
 //
 //go:nosplit
 func dounlockOSThread() {
-	if GOARCH == "wasm" {
-		return // no threads on wasm yet
+	if GOARCH == "wasm" && !wasmThreads {
+		return // no threads in the default wasm build
 	}
 	gp := getg()
 	if gp.m.lockedInt != 0 || gp.m.lockedExt != 0 {
@@ -6444,9 +6450,9 @@ func checkdead() {
 	// For -buildmode=c-shared or -buildmode=c-archive it's OK if
 	// there are no running goroutines. The calling program is
 	// assumed to be running.
-	// One exception is Wasm, which is single-threaded. If we are
+	// One exception is Wasm without threads. If we are
 	// in Go and all goroutines are blocked, it deadlocks.
-	if (islibrary || isarchive) && GOARCH != "wasm" {
+	if (islibrary || isarchive) && (GOARCH != "wasm" || wasmThreads) {
 		return
 	}
 
@@ -6551,8 +6557,8 @@ var forcegcperiod int64 = 2 * 60 * 1e9
 
 // haveSysmon indicates whether there is sysmon thread support.
 //
-// No threads on wasm yet, so no sysmon.
-const haveSysmon = GOARCH != "wasm"
+// The default WebAssembly build has no threads.
+const haveSysmon = GOARCH != "wasm" || wasmThreads
 
 // Always runs without a P, so write barriers are not allowed.
 //

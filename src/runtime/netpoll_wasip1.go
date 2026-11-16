@@ -185,6 +185,13 @@ func netpollclose(fd uintptr) int32 {
 func netpollBreak() {}
 
 func netpoll(delay int64) (gList, int32) {
+	// Preview 1 has no portable pollable event that netpollBreak can signal.
+	// Bound a blocking poll so another M can change subscriptions and a newly
+	// scheduled timer can interrupt an idle poll promptly.
+	const maxPollDelay = 1e6 // 1 millisecond
+	if wasmThreads && (delay < 0 || delay > maxPollDelay) {
+		delay = maxPollDelay
+	}
 	lock(&mtx)
 
 	// If delay >= 0, we include a subscription of type Clock that we use as

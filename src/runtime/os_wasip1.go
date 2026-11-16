@@ -158,6 +158,7 @@ func (u *subscriptionUnion) subscriptionFdReadwrite() *subscriptionFdReadwrite {
 //go:noescape
 func poll_oneoff(in *subscription, out *event, nsubscriptions size, nevents *size) errno
 
+//go:nosplit
 func write1(fd uintptr, p unsafe.Pointer, n int32) int32 {
 	iov := iovec{
 		buf:    uintptr32(uintptr(p)),
@@ -170,6 +171,7 @@ func write1(fd uintptr, p unsafe.Pointer, n int32) int32 {
 	return int32(nwritten)
 }
 
+//go:nosplit
 func usleep(usec uint32) {
 	var in subscription
 	var out event
@@ -247,10 +249,12 @@ func goenvs() {
 	}
 }
 
+//go:nosplit
 func walltime() (sec int64, nsec int32) {
 	return walltime1()
 }
 
+//go:nosplit
 func walltime1() (sec int64, nsec int32) {
 	var time timestamp
 	if clock_time_get(clockRealtime, 0, &time) != 0 {
@@ -259,6 +263,7 @@ func walltime1() (sec int64, nsec int32) {
 	return int64(time / 1000000000), int32(time % 1000000000)
 }
 
+//go:nosplit
 func nanotime1() int64 {
 	var time timestamp
 	if clock_time_get(clockMonotonic, 0, &time) != 0 {

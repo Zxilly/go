@@ -690,7 +690,7 @@ func generateMutexWaitTime(mu locker2) time.Duration {
 
 // See issue #60276.
 func TestCPUMetricsSleep(t *testing.T) {
-	if runtime.GOOS == "wasip1" {
+	if runtime.GOOS == "wasip1" && !runtime.WasmThreads {
 		// Since wasip1 busy-waits in the scheduler, there's no meaningful idle
 		// time. This is accurately reflected in the metrics, but it means this
 		// test is basically meaningless on this platform.
@@ -888,7 +888,7 @@ func TestSchedPauseMetrics(t *testing.T) {
 		{
 			name: "runtime.GOMAXPROCS",
 			fn: func(t *testing.T) {
-				if runtime.GOARCH == "wasm" {
+				if runtime.GOARCH == "wasm" && !runtime.WasmThreads {
 					t.Skip("GOMAXPROCS >1 not supported on wasm")
 				}
 

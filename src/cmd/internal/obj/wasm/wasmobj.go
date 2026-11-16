@@ -156,11 +156,13 @@ var Linkwasm = obj.LinkArch{
 }
 
 var (
-	morestack             *obj.LSym
-	morestackNoCtxt       *obj.LSym
-	sigpanic              *obj.LSym
-	wasm_pc_f_loop_export *obj.LSym
-	runtimeNotInitialized *obj.LSym
+	morestack              *obj.LSym
+	morestackNoCtxt        *obj.LSym
+	sigpanic               *obj.LSym
+	wasm_pc_f_loop_export  *obj.LSym
+	runtimeNotInitialized  *obj.LSym
+	runtimeWasmExportEnter *obj.LSym
+	runtimeWasmExportExit  *obj.LSym
 )
 
 const (
@@ -189,6 +191,8 @@ func instinit(ctxt *obj.Link) {
 	sigpanic = ctxt.LookupABI("runtime.sigpanic", obj.ABIInternal)
 	wasm_pc_f_loop_export = ctxt.Lookup("wasm_pc_f_loop_export")
 	runtimeNotInitialized = ctxt.Lookup("runtime.notInitialized")
+	runtimeWasmExportEnter = ctxt.Lookup("runtime.wasmExportEnter")
+	runtimeWasmExportExit = ctxt.Lookup("runtime.wasmExportExit")
 }
 
 func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
@@ -380,23 +384,20 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		} else {
 			// large stack: SP-framesize <= stackguard-StackSmall
 			//              SP <= stackguard+(framesize-StackSmall)
-			// Get SP
-			// Get g
-			// I32WrapI64
-			// I32Load $stackguard0
-			// I32Const $(framesize-StackSmall)
-			// I32Add
-			// I32GtU
+			// Compute the right-hand side in 64 bits. In particular,
+			// adding the frame size to stackPreempt must not wrap the
+			// 32-bit guard around and suppress the stack check.
 
 			p = appendp(p, AGet, regAddr(REG_SP))
+			p = appendp(p, AI64ExtendI32U)
 			p = appendp(p, AGet, regAddr(REGG))
 			p = appendp(p, AI32WrapI64)
 			p = appendp(p, AI32Load, constAddr(2*int64(ctxt.Arch.PtrSize))) // G.stackguard0
-			p = appendp(p, AI32Const, constAddr(framesize-abi.StackSmall))
-			p = appendp(p, AI32Add)
-			p = appendp(p, AI32LeU)
+			p = appendp(p, AI64ExtendI32U)
+			p = appendp(p, AI64Const, constAddr(framesize-abi.StackSmall))
+			p = appendp(p, AI64Add)
+			p = appendp(p, AI64LeU)
 		}
-		// TODO(neelance): handle wraparound case
 
 		p = appendp(p, AIf)
 		// This CALL does *not* have a resume point after it
@@ -991,6 +992,27 @@ func genWasmExportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 	if p.Link != nil {
 		panic("wrapper functions for WASM export should not have a body")
 	}
+	// A host callback may need to reacquire a P. Use the same trampoline
+	// boundary as the exported Go call, since exitsyscall can suspend.
+	callHook := func(fn *obj.LSym, pc int64) {
+		ret := obj.Addr{Type: obj.TYPE_ADDR, Name: obj.NAME_EXTERN, Sym: s, Offset: pc}
+		p = appendp(p, AGet, regAddr(REG_SP))
+		p = appendp(p, AI32Const, constAddr(8))
+		p = appendp(p, AI32Sub)
+		p = appendp(p, ASet, regAddr(REG_SP))
+		p = appendp(p, AGet, regAddr(REG_SP))
+		p = appendp(p, AI64Const, ret)
+		p = appendp(p, AI64Store, constAddr(0))
+		p = appendp(p, AI32Const, constAddr(0))
+		p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: fn})
+		p = appendp(p, AIf)
+		p = appendp(p, AI64Const, ret)
+		p = appendp(p, AI64Const, constAddr(16))
+		p = appendp(p, AI64ShrU)
+		p = appendp(p, AI32WrapI64)
+		p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: wasm_pc_f_loop_export})
+		p = appendp(p, AEnd)
+	}
 
 	// Detect and error out if called before runtime initialization
 	// SP is 0 if not initialized
@@ -999,6 +1021,9 @@ func genWasmExportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 	p = appendp(p, AIf)
 	p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: runtimeNotInitialized})
 	p = appendp(p, AEnd)
+	if buildcfg.GOWASM.Threads {
+		callHook(runtimeWasmExportEnter, 0)
+	}
 
 	// Now that we've checked the SP, generate the prologue
 	if framesize > 0 {
@@ -1070,6 +1095,10 @@ func genWasmExportWrapper(s *obj.LSym, appendp func(p *obj.Prog, as obj.As, args
 	p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: wasm_pc_f_loop_export})
 	p = appendp(p, AEnd)
 
+	if buildcfg.GOWASM.Threads {
+		callHook(runtimeWasmExportExit, retAddr.Offset)
+	}
+
 	// Load result
 	if len(we.Results) > 1 {
 		panic("invalid results type")
@@ -1124,6 +1153,7 @@ var notUsePC_B = map[string]bool{
 	"runtime.wasmStore64":     true,
 	"runtime.wasmMove":        true,
 	"runtime.wasmZero":        true,
+	"_rt0_wasm_thread":        true,
 	"_rt0_wasm_js":            true,
 	"_rt0_wasm_wasip1":        true,
 	"_rt0_wasm_wasip1_lib":    true,
@@ -1197,7 +1227,7 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	case "runtime.wasmZero":
 		varDecls = []*varDecl{{count: 4, typ: i64}}
 		useAssemblyRegMap()
-	case "_rt0_wasm_js", "_rt0_wasm_wasip1", "_rt0_wasm_wasip1_lib",
+	case "_rt0_wasm_js", "_rt0_wasm_wasip1", "_rt0_wasm_wasip1_lib", "_rt0_wasm_thread",
 		"wasm_export_run", "wasm_export_resume", "wasm_export_getsp",
 		"wasm_pc_f_loop", "runtime.wasmDiv", "runtime.wasmTruncS", "runtime.wasmTruncU", "memeqbody",
 		"runtime.wasm_goentry", "runtime.wasm_g0entry", "wasm_scheduler_loop", "wasm_resume":
