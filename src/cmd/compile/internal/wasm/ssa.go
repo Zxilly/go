@@ -16,6 +16,7 @@ import (
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
 	"cmd/internal/obj/wasm"
+	"internal/buildcfg"
 )
 
 /*
@@ -55,9 +56,10 @@ import (
 
    Threads:
 
-   Wasm doesn't (yet) have threads. We have to simulate threads by
-   keeping goroutine stacks in linear memory and unwinding
-   the Wasm stack each time we want to switch goroutines.
+   Goroutine stacks are kept in linear memory. Switching goroutines
+   unwinds the Wasm stack, both in the default single-threaded runtime
+   and in thread-enabled builds. In the threaded runtime each host thread
+   runs a separate module instance sharing the same linear memory.
 
    To support unwinding a stack, each function call returns on the Wasm
    stack a boolean that tells the function whether it should return
@@ -67,7 +69,7 @@ import (
 
    Stack pointer:
 
-   There is a single global stack pointer which records the stack pointer
+   Each instance has a global stack pointer which records the stack pointer
    used by the currently active goroutine. This is just an address in
    linear memory where the Go runtime is maintaining the stack for that
    goroutine.
@@ -157,6 +159,7 @@ func zeroRange(pp *objw.Progs, p *obj.Prog, off, cnt int64, state *uint32) *obj.
 		p = pp.Append(p, wasm.AGet, obj.TYPE_REG, wasm.REG_SP, 0, 0, 0, 0)
 		p = pp.Append(p, wasm.AI64Const, obj.TYPE_CONST, 0, 0, 0, 0, 0)
 		p = pp.Append(p, wasm.AI64Store, 0, 0, 0, obj.TYPE_CONST, 0, off+i)
+		p.Mark |= wasm.WasmStack
 	}
 
 	return p
@@ -255,13 +258,24 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		getValue32(s, v.Args[0])
 		getValue32(s, v.Args[1])
 		i32Const(s, int32(v.AuxInt))
-		s.Prog(wasm.AMemoryCopy)
+		if buildcfg.GOWASM.Threads {
+			p := s.Prog(wasm.ACall)
+			p.To = obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: base.Ctxt.Lookup("runtime.wasmMove")}
+		} else {
+			s.Prog(wasm.AMemoryCopy)
+		}
 
 	case ssaop.OpWasmLoweredZero:
 		getValue32(s, v.Args[0])
-		i32Const(s, 0)
-		i32Const(s, int32(v.AuxInt))
-		s.Prog(wasm.AMemoryFill)
+		if buildcfg.GOWASM.Threads {
+			i32Const(s, int32(v.AuxInt))
+			p := s.Prog(wasm.ACall)
+			p.To = obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: base.Ctxt.Lookup("runtime.wasmZero")}
+		} else {
+			i32Const(s, 0)
+			i32Const(s, int32(v.AuxInt))
+			s.Prog(wasm.AMemoryFill)
+		}
 
 	case ssaop.OpWasmLoweredNilCheck:
 		getValue64(s, v.Args[0])
@@ -288,6 +302,9 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		getValue64(s, v.Args[1])
 		p := s.Prog(v.Op.Asm())
 		p.To = obj.Addr{Type: obj.TYPE_CONST, Offset: v.AuxInt}
+		if isStackAddress(v.Args[0]) {
+			p.Mark |= wasm.WasmStack
+		}
 
 	case ssaop.OpWasmV128Store:
 		getValue32(s, v.Args[0])
@@ -304,6 +321,7 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		}
 		p := s.Prog(storeOp(v.Type))
 		ssagen.AddrAuto(&p.To, v)
+		p.Mark |= wasm.WasmStack
 
 	case ssaop.OpClobber, ssaop.OpClobberReg:
 		// TODO: implement for clobberdead experiment. Nop is ok for now.
@@ -403,6 +421,9 @@ func ssaGenValueOnStack(s *ssagen.State, v *ssa.Value, extend bool) {
 		getValue32(s, v.Args[0])
 		p := s.Prog(v.Op.Asm())
 		p.From = obj.Addr{Type: obj.TYPE_CONST, Offset: v.AuxInt}
+		if isStackAddress(v.Args[0]) {
+			p.Mark |= wasm.WasmStack
+		}
 
 	case ssaop.OpWasmI64Eqz:
 		getValue64(s, v.Args[0])
@@ -478,6 +499,7 @@ func ssaGenValueOnStack(s *ssagen.State, v *ssa.Value, extend bool) {
 	case ssaop.OpLoadReg:
 		p := s.Prog(loadOp(v.Type))
 		ssagen.AddrAuto(&p.From, v.Args[0])
+		p.Mark |= wasm.WasmStack
 
 	case ssaop.OpCopy:
 		if v.Type.Size() == 16 {
@@ -505,6 +527,24 @@ func isAlready32(v *ssa.Value) bool {
 	default:
 		return false
 	}
+}
+
+// isStackAddress recognizes only explicit addresses in the current frame.
+// In particular, a pointer loaded from a stack slot is not a stack address.
+func isStackAddress(v *ssa.Value) bool {
+	switch v.Op {
+	case ssaop.OpSP:
+		return true
+	case ssaop.OpSPanchored:
+		return v.Args[0].Op == ssaop.OpSP
+	case ssaop.OpWasmLoweredAddr:
+		if _, global := v.Aux.(*obj.LSym); global {
+			return false
+		}
+		base := v.Args[0]
+		return base.Op == ssaop.OpSP || base.Op == ssaop.OpSPanchored && base.Args[0].Op == ssaop.OpSP
+	}
+	return false
 }
 
 func getValue32(s *ssagen.State, v *ssa.Value) {

@@ -74,6 +74,10 @@ func readWasmImport(ldr *loader.Loader, s loader.Sym) obj.WasmImport {
 // Go calling convention. Keep in sync with notUsePC_B and the special cases
 // in assemble in cmd/internal/obj/wasm.
 var wasmFuncTypes = map[string]*wasmFuncType{
+	"runtime.wasmLoad64":      {Params: []byte{I32, I32}, Results: []byte{I64}},           // address, offset -> word
+	"runtime.wasmStore64":     {Params: []byte{I32, I64, I32}},                            // address, word, offset
+	"runtime.wasmMove":        {Params: []byte{I32, I32, I32}},                            // destination, source, size
+	"runtime.wasmZero":        {Params: []byte{I32, I32}},                                 // destination, size
 	"_rt0_wasm_js":            {Params: []byte{}},                                         //
 	"_rt0_wasm_wasip1":        {Params: []byte{}},                                         //
 	"_rt0_wasm_wasip1_lib":    {Params: []byte{}},                                         //

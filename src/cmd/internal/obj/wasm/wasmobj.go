@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"internal/abi"
+	"internal/buildcfg"
 	"io"
 	"math"
 )
@@ -165,6 +166,13 @@ var (
 const (
 	/* mark flags */
 	WasmImport = 1 << 0
+
+	// WasmStack marks a memory access to the current goroutine's stack.
+	// The compiler and assembler set it only for explicit frame addresses,
+	// never for an address recovered from an arbitrary pointer or register.
+	// Stack scanning stops the goroutine, so these accesses cannot race
+	// with the GC and do not need the threaded 64-bit memory helpers.
+	WasmStack = 1 << 1
 )
 
 const (
@@ -503,6 +511,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				Offset: pcAfterCall, // PC_B
 			})
 			p = appendp(p, AI64Store, constAddr(0))
+			p.Mark |= WasmStack // return PC on the current Go stack
 
 			// low-level WebAssembly call to function
 			switch call.To.Type {
@@ -642,6 +651,9 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				}
 
 				p = appendp(p, as, constAddr(from.Offset))
+				if from.Reg == REG_SP {
+					p.Mark |= WasmStack
+				}
 			}
 
 		case AMOVB, AMOVH, AMOVW, AMOVD:
@@ -697,6 +709,9 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 						p = appendp(p, AI32WrapI64)
 					}
 					p = appendp(p, loadAs, constAddr(mov.From.Offset))
+					if mov.From.Reg == REG_SP {
+						p.Mark |= WasmStack
+					}
 
 				default:
 					panic("bad MOV type")
@@ -725,6 +740,9 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 				}
 				appendValue()
 				p = appendp(p, storeAs, constAddr(mov.To.Offset))
+				if mov.To.Reg == REG_SP && mov.To.Name != obj.NAME_EXTERN {
+					p.Mark |= WasmStack
+				}
 
 			default:
 				panic("bad MOV type")
@@ -765,6 +783,41 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 		if len(unwindExitBranches) > 0 {
 			p = appendp(p, AEnd) // end of unwindExit
 			p = appendp(p, AI32Const, constAddr(1))
+		}
+	}
+
+	if buildcfg.GOWASM.Threads && s.Name != "runtime.wasmLoad64" && s.Name != "runtime.wasmStore64" {
+		// Ordinary WebAssembly 64-bit memory operations may tear, even
+		// when naturally aligned. Go requires indivisible word accesses,
+		// and the GC must never observe a partially written pointer.
+		// The helpers use atomics for aligned accesses and retain ordinary
+		// loads/stores for unaligned accesses introduced by byte merging.
+		for p := s.Func().Text; p != nil; p = p.Link {
+			if p.Mark&WasmStack != 0 {
+				continue
+			}
+			var helper string
+			var offset obj.Addr
+			switch p.As {
+			case AI64Load, AF64Load:
+				helper = "runtime.wasmLoad64"
+				offset = p.From
+			case AI64Store, AF64Store:
+				helper = "runtime.wasmStore64"
+				offset = p.To
+			default:
+				continue
+			}
+			as := p.As
+			p.As = obj.ANOP
+			if as == AF64Store {
+				p = appendp(p, AI64ReinterpretF64)
+			}
+			p = appendp(p, AI32Const, offset)
+			p = appendp(p, ACall, obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: ctxt.Lookup(helper)})
+			if as == AF64Load {
+				p = appendp(p, AF64ReinterpretI64)
+			}
 		}
 	}
 
@@ -1067,6 +1120,10 @@ func regAddr(reg int16) obj.Addr {
 // Keep in sync with the special cases in assemble and with
 // wasmFuncTypes in cmd/link/internal/wasm.
 var notUsePC_B = map[string]bool{
+	"runtime.wasmLoad64":      true,
+	"runtime.wasmStore64":     true,
+	"runtime.wasmMove":        true,
+	"runtime.wasmZero":        true,
 	"_rt0_wasm_js":            true,
 	"_rt0_wasm_wasip1":        true,
 	"_rt0_wasm_wasip1_lib":    true,
@@ -1131,6 +1188,15 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 	// Some functions use a special calling convention.
 	// Keep in sync with notUsePC_B and with wasmFuncTypes in cmd/link/internal/wasm.
 	switch s.Name {
+	case "runtime.wasmLoad64", "runtime.wasmStore64":
+		varDecls = []*varDecl{{count: 1, typ: i64}}
+		useAssemblyRegMap()
+	case "runtime.wasmMove":
+		varDecls = []*varDecl{{count: 3, typ: i64}}
+		useAssemblyRegMap()
+	case "runtime.wasmZero":
+		varDecls = []*varDecl{{count: 4, typ: i64}}
+		useAssemblyRegMap()
 	case "_rt0_wasm_js", "_rt0_wasm_wasip1", "_rt0_wasm_wasip1_lib",
 		"wasm_export_run", "wasm_export_resume", "wasm_export_getsp",
 		"wasm_pc_f_loop", "runtime.wasmDiv", "runtime.wasmTruncS", "runtime.wasmTruncU", "memeqbody",

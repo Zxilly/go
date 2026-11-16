@@ -7,6 +7,7 @@ package wasm
 import (
 	"bytes"
 	"cmd/internal/obj"
+	"internal/buildcfg"
 	"testing"
 )
 
@@ -43,6 +44,64 @@ func TestWriteOpcode(t *testing.T) {
 		if got := buf.Bytes(); !bytes.Equal(got, test.want) {
 			t.Errorf("writeOpcode(%v) = % x, want % x", test.as, got, test.want)
 		}
+	}
+}
+
+func TestThreadMemoryStackAccess(t *testing.T) {
+	oldThreads := buildcfg.GOWASM.Threads
+	buildcfg.GOWASM.Threads = true
+	defer func() { buildcfg.GOWASM.Threads = oldThreads }()
+	ctxt := obj.Linknew(&Linkwasm)
+	ctxt.DiagFunc = func(format string, args ...any) { t.Fatalf(format, args...) }
+	instinit(ctxt)
+	s := ctxt.Lookup("test.stackAccess")
+	s.Set(obj.AttrNoSplit, true)
+	text := &obj.Prog{As: obj.ATEXT, From: obj.Addr{Sym: s}, To: obj.Addr{Val: int32(24)}}
+	s.NewFuncInfo().Text = text
+	progs := []*obj.Prog{
+		{As: AI64Load, From: obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_PARAM}},
+		{As: AMOVD, From: obj.Addr{Type: obj.TYPE_MEM, Reg: REG_SP, Offset: 16}, To: regAddr(REG_R0)},
+		{As: AF64Load, From: obj.Addr{Type: obj.TYPE_MEM, Reg: REG_SP, Offset: 24}},
+		{As: AMOVD, From: regAddr(REG_R0), To: obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_PARAM, Offset: 8}},
+		{As: AI64Store, Mark: WasmStack, To: constAddr(16)},
+		// Arbitrary addresses, including globals and pointers loaded from
+		// a stack slot into a register, must still use the helpers.
+		{As: AI64Load, From: obj.Addr{Type: obj.TYPE_MEM, Reg: REG_R0}},
+		{As: AMOVD, From: regAddr(REG_R0), To: obj.Addr{Type: obj.TYPE_MEM, Reg: REG_R1}},
+		{As: AI64Store, To: constAddr(0)},
+		{As: AMOVD, From: regAddr(REG_R0), To: obj.Addr{Type: obj.TYPE_MEM, Name: obj.NAME_EXTERN, Sym: ctxt.Lookup("test.global")}},
+		{As: obj.ARET},
+	}
+	p := text
+	for _, next := range progs {
+		p.Link = next
+		p = next
+	}
+	preprocess(ctxt, s, ctxt.NewProg)
+	var stackLoads, stackStores, helperLoads, helperStores int
+	for p := text; p != nil; p = p.Link {
+		switch p.As {
+		case AI64Load, AF64Load:
+			if p.Mark&WasmStack == 0 {
+				t.Fatal("unprotected non-stack load")
+			}
+			stackLoads++
+		case AI64Store, AF64Store:
+			if p.Mark&WasmStack == 0 {
+				t.Fatal("unprotected non-stack store")
+			}
+			stackStores++
+		case ACall:
+			switch p.To.Sym.Name {
+			case "runtime.wasmLoad64":
+				helperLoads++
+			case "runtime.wasmStore64":
+				helperStores++
+			}
+		}
+	}
+	if stackLoads != 3 || stackStores != 2 || helperLoads != 1 || helperStores != 3 {
+		t.Fatalf("stack loads/stores = %d/%d, helper loads/stores = %d/%d", stackLoads, stackStores, helperLoads, helperStores)
 	}
 }
 

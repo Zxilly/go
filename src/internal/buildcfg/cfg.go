@@ -342,6 +342,7 @@ type gowasmFeatures struct {
 	//SatConv bool
 	//SignExt bool
 	StackSwitch bool
+	Threads     bool // shared memory and atomics, for either thread host
 }
 
 func (f gowasmFeatures) String() string {
