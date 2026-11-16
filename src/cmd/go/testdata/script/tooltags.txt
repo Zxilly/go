@@ -75,6 +75,17 @@ env GOWASM=satconv
 go list -f '{{context.ToolTags}}'
 stdout 'wasm.satconv'
 
+env GOOS=wasip1
+env GOWASM=wasip1-threads
+go list -f '{{context.ToolTags}}'
+stdout 'wasm.satconv wasm.signext wasm.threads'
+go env GOWASM
+stdout '^wasip1-threads$'
+
+env GOWASM=
+go list -f '{{context.ToolTags}}'
+! stdout 'wasm.threads'
+
 -- go.mod --
 module m
 

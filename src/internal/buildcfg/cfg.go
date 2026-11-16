@@ -341,14 +341,20 @@ type gowasmFeatures struct {
 	// Legacy features, now always enabled
 	//SatConv bool
 	//SignExt bool
-	StackSwitch bool
-	Threads     bool // shared memory and atomics, for either thread host
+	StackSwitch   bool
+	Threads       bool // shared memory and atomics, for either thread host
+	WASIP1Threads bool // select the WASI thread-spawn ABI instead of JavaScript Workers
 }
 
 func (f gowasmFeatures) String() string {
 	var flags []string
 	if f.StackSwitch {
 		flags = append(flags, "stackswitch")
+	}
+	if f.WASIP1Threads {
+		flags = append(flags, "wasip1-threads")
+	} else if f.Threads {
+		flags = append(flags, "threads")
 	}
 	return strings.Join(flags, ",")
 }
@@ -362,10 +368,18 @@ func gowasm() (f gowasmFeatures) {
 			// ignore, always enabled
 		case "stackswitch":
 			f.StackSwitch = true
+		case "wasip1-threads":
+			f.Threads = true
+			f.WASIP1Threads = true
 		case "":
 			// ignore
 		default:
 			Error = fmt.Errorf("invalid GOWASM: no such feature %q", opt)
+		}
+	}
+	if GOARCH == "wasm" && f.Threads {
+		if f.WASIP1Threads && GOOS != "wasip1" {
+			Error = fmt.Errorf("GOWASM=wasip1-threads requires GOOS=wasip1")
 		}
 	}
 	return
@@ -477,6 +491,9 @@ func gogoarchTags() []string {
 		list = append(list, GOARCH+".signext")
 		if GOWASM.StackSwitch {
 			list = append(list, GOARCH+".stackswitch")
+		}
+		if GOWASM.Threads {
+			list = append(list, GOARCH+".threads")
 		}
 		return list
 	}

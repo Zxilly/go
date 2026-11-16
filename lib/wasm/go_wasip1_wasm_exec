@@ -15,10 +15,15 @@ case "$GOWASIRUNTIME" in
 		;;
 	"wasmtime" | "")
 		WASMTIME_ARGS="-W max-wasm-stack=8388608"
+		WASMTIME_ENV=()
 		if [[ ",$GOWASM," == *",stackswitch,"* ]]; then
 			WASMTIME_ARGS="$WASMTIME_ARGS -W stack-switching=y,function-references=y,gc=y"
 		fi
-		exec wasmtime run --dir=/ --env PWD="$PWD" --env PATH="$PATH" $WASMTIME_ARGS ${GOWASIRUNTIMEARGS:-} "$1" "${@:2}"
+		if [[ ",$GOWASM," == *",wasip1-threads,"* ]]; then
+			WASMTIME_ARGS="$WASMTIME_ARGS -S threads=y"
+			WASMTIME_ENV=(--env "GOMAXPROCS=${GOMAXPROCS:-1}")
+		fi
+		exec wasmtime run --dir=/ --env PWD="$PWD" --env PATH="$PATH" "${WASMTIME_ENV[@]}" $WASMTIME_ARGS ${GOWASIRUNTIMEARGS:-} "$1" "${@:2}"
 		;;
 	*)
 		echo "Unknown Go WASI runtime specified: $GOWASIRUNTIME"

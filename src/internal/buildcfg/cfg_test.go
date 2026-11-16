@@ -90,6 +90,46 @@ func TestConfigFlags(t *testing.T) {
 	}
 }
 
+func TestWasmThreads(t *testing.T) {
+	oldError, oldOS, oldArch := Error, GOOS, GOARCH
+	t.Cleanup(func() { Error, GOOS, GOARCH = oldError, oldOS, oldArch })
+	for _, tc := range []struct {
+		goos, feature, canonical string
+		ok                       bool
+	}{
+		{"wasip1", "wasip1-threads", "wasip1-threads", true},
+		{"wasip1", "wasip1-threads,stackswitch", "stackswitch,wasip1-threads", true},
+		{"js", "wasip1-threads", "", false},
+		{"wasip1", "threads", "", false},
+		{"js", "threads,wasip1-threads", "", false},
+		{"wasip1", "threads,wasip1-threads", "", false},
+	} {
+		t.Run(tc.goos+"/"+tc.feature, func(t *testing.T) {
+			GOOS, GOARCH = tc.goos, "wasm"
+			t.Setenv("GOWASM", tc.feature)
+			Error = nil
+			f := gowasm()
+			if (Error == nil) != tc.ok {
+				t.Fatalf("gowasm() = %v, error %v; want success %v", f, Error, tc.ok)
+			}
+			if !tc.ok {
+				return
+			}
+			if !f.Threads {
+				t.Fatal("gowasm().Threads = false, want true")
+			}
+			if got := f.String(); got != tc.canonical {
+				t.Errorf("gowasm().String() = %q, want %q", got, tc.canonical)
+			}
+		})
+	}
+	t.Setenv("GOWASM", "")
+	Error = nil
+	if gowasm().Threads {
+		t.Fatal("threads enabled by default")
+	}
+}
+
 func TestGoarm64FeaturesSupports(t *testing.T) {
 	g, _ := ParseGoarm64("v9.3")
 
