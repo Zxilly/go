@@ -12,6 +12,7 @@ import (
 	"cmd/link/internal/ld"
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
+	"encoding/binary"
 	"fmt"
 	"internal/buildcfg"
 	"io"
@@ -32,20 +33,23 @@ const (
 )
 
 const (
-	sectionCustom   = 0
-	sectionType     = 1
-	sectionImport   = 2
-	sectionFunction = 3
-	sectionTable    = 4
-	sectionMemory   = 5
-	sectionTag      = 13
-	sectionGlobal   = 6
-	sectionExport   = 7
-	sectionStart    = 8
-	sectionElement  = 9
-	sectionCode     = 10
-	sectionData     = 11
+	sectionCustom    = 0
+	sectionType      = 1
+	sectionImport    = 2
+	sectionFunction  = 3
+	sectionTable     = 4
+	sectionMemory    = 5
+	sectionTag       = 13
+	sectionGlobal    = 6
+	sectionExport    = 7
+	sectionStart     = 8
+	sectionElement   = 9
+	sectionCode      = 10
+	sectionData      = 11
+	sectionDataCount = 12
 )
+
+const maxMemoryPages = 65536 // 4 GiB
 
 func gentext(ctxt *ld.Link, ldr *loader.Loader) {
 }
@@ -78,6 +82,7 @@ var wasmFuncTypes = map[string]*wasmFuncType{
 	"runtime.wasmStore64":     {Params: []byte{I32, I64, I32}},                            // address, word, offset
 	"runtime.wasmMove":        {Params: []byte{I32, I32, I32}},                            // destination, source, size
 	"runtime.wasmZero":        {Params: []byte{I32, I32}},                                 // destination, size
+	"_rt0_wasm_thread":        {Params: []byte{I32, I32}},                                 // tid, start_arg
 	"_rt0_wasm_js":            {Params: []byte{}},                                         //
 	"_rt0_wasm_wasip1":        {Params: []byte{}},                                         //
 	"_rt0_wasm_wasip1_lib":    {Params: []byte{}},                                         //
@@ -258,6 +263,32 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 		fns[i] = &wasmFunc{Name: name, Type: typ, Code: wfn.Bytes()}
 	}
 
+	segments := makeDataSegments()
+	initEntry := uint64(0)
+	if buildcfg.GOWASM.Threads {
+		// Only the main entry initializes shared memory. Worker instances
+		// enter through their thread export without touching live data.
+		entryName, exportName := "_rt0_wasm_wasip1", "_start"
+		var params []byte
+		if buildcfg.GOOS == "js" {
+			entryName, exportName = "wasm_export_run", "run"
+			params = []byte{I32, I32}
+		} else if ctxt.BuildMode == ld.BuildModeCShared {
+			entryName, exportName = "_rt0_wasm_wasip1_lib", "_initialize"
+		}
+		entry := ldr.Lookup(entryName, 0)
+		if entry == 0 {
+			ld.Exitf("missing WebAssembly entry point %s", entryName)
+		}
+		entryIndex := uint64(len(hostImports)) + uint64(uint32(uint64(ldr.SymValue(entry))>>16))
+		initEntry = uint64(len(hostImports) + len(fns))
+		fns = append(fns, &wasmFunc{
+			Name: exportName,
+			Type: lookupType(&wasmFuncType{Params: params}, &types),
+			Code: dataInitCode(segments, entryIndex, len(params)),
+		})
+	}
+
 	ctxt.Out.Write([]byte{0x00, 0x61, 0x73, 0x6d}) // magic
 	ctxt.Out.Write([]byte{0x01, 0x00, 0x00, 0x00}) // version
 
@@ -267,17 +298,34 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 	}
 
 	writeTypeSec(ctxt, types)
-	writeImportSec(ctxt, hostImports)
+	writeImportSec(ctxt, ldr, hostImports)
 	writeFunctionSec(ctxt, fns)
 	writeTableSec(ctxt, fns)
 	writeMemorySec(ctxt, ldr)
 	writeTagSec(ctxt)
 	writeGlobalSec(ctxt)
-	writeExportSec(ctxt, ldr, len(hostImports))
+	writeExportSec(ctxt, ldr, len(hostImports), initEntry)
 	writeElementSec(ctxt, uint64(len(hostImports)), uint64(len(fns)))
+	if buildcfg.GOWASM.Threads {
+		sizeOffset := writeSecHeader(ctxt, sectionDataCount)
+		writeUleb128(ctxt.Out, uint64(len(segments)))
+		writeSecSize(ctxt, sizeOffset)
+	}
 	writeCodeSec(ctxt, fns)
-	writeDataSec(ctxt)
+	writeDataSec(ctxt, segments)
 	writeProducerSec(ctxt)
+	if buildcfg.GOWASM.Threads {
+		// JavaScript's Module API exposes custom sections but not memory
+		// import limits. Let Worker hosts create the required shared memory.
+		sizeOffset := writeSecHeader(ctxt, sectionCustom)
+		writeName(ctxt.Out, "go:threads")
+		var info [12]byte
+		binary.LittleEndian.PutUint32(info[0:4], 1)
+		binary.LittleEndian.PutUint32(info[4:8], uint32(initialMemoryPages(ldr)))
+		binary.LittleEndian.PutUint32(info[8:12], maxMemoryPages)
+		ctxt.Out.Write(info[:])
+		writeSecSize(ctxt, sizeOffset)
+	}
 	if !*ld.FlagS {
 		writeNameSec(ctxt, len(hostImports), fns)
 	}
@@ -373,10 +421,14 @@ func writeValTypes(w io.ByteWriter, vs []byte) {
 
 // writeImportSec writes the section that lists the functions that get
 // imported from the WebAssembly host, usually JavaScript.
-func writeImportSec(ctxt *ld.Link, hostImports []*wasmFunc) {
+func writeImportSec(ctxt *ld.Link, ldr *loader.Loader, hostImports []*wasmFunc) {
 	sizeOffset := writeSecHeader(ctxt, sectionImport)
 
-	writeUleb128(ctxt.Out, uint64(len(hostImports))) // number of imports
+	n := len(hostImports)
+	if buildcfg.GOWASM.Threads {
+		n++
+	}
+	writeUleb128(ctxt.Out, uint64(n)) // number of imports
 	for _, fn := range hostImports {
 		if fn.Module != "" {
 			writeName(ctxt.Out, fn.Module)
@@ -386,6 +438,14 @@ func writeImportSec(ctxt *ld.Link, hostImports []*wasmFunc) {
 		writeName(ctxt.Out, fn.Name)
 		ctxt.Out.WriteByte(0x00) // func import
 		writeUleb128(ctxt.Out, uint64(fn.Type))
+	}
+	if buildcfg.GOWASM.Threads {
+		writeName(ctxt.Out, "env")
+		writeName(ctxt.Out, "memory")
+		ctxt.Out.WriteByte(0x02) // memory import
+		ctxt.Out.WriteByte(0x03) // shared memory with a maximum
+		writeUleb128(ctxt.Out, initialMemoryPages(ldr))
+		writeUleb128(ctxt.Out, maxMemoryPages)
 	}
 
 	writeSecSize(ctxt, sizeOffset)
@@ -434,18 +494,23 @@ func writeTableSec(ctxt *ld.Link, fns []*wasmFunc) {
 // writeMemorySec writes the section that declares linear memories. Currently one linear memory is being used.
 // Linear memory always starts at address zero. More memory can be requested with the GrowMemory instruction.
 func writeMemorySec(ctxt *ld.Link, ldr *loader.Loader) {
+	if buildcfg.GOWASM.Threads {
+		return // shared memory is imported
+	}
 	sizeOffset := writeSecHeader(ctxt, sectionMemory)
 
-	dataEnd := uint64(ldr.SymValue(ldr.Lookup("runtime.end", 0)))
-	var initialSize = dataEnd + 1<<20 // 1 MB, for runtime init allocating a few pages
-
-	const wasmPageSize = 64 << 10 // 64KB
-
-	writeUleb128(ctxt.Out, 1)                        // number of memories
-	ctxt.Out.WriteByte(0x00)                         // no maximum memory size
-	writeUleb128(ctxt.Out, initialSize/wasmPageSize) // minimum (initial) memory size
+	writeUleb128(ctxt.Out, 1)                       // number of memories
+	ctxt.Out.WriteByte(0x00)                        // no maximum memory size
+	writeUleb128(ctxt.Out, initialMemoryPages(ldr)) // minimum (initial) memory size
 
 	writeSecSize(ctxt, sizeOffset)
+}
+
+func initialMemoryPages(ldr *loader.Loader) uint64 {
+	dataEnd := uint64(ldr.SymValue(ldr.Lookup("runtime.end", 0)))
+	initialSize := dataEnd + 1<<20 // 1 MB, for runtime init allocating a few pages
+	const wasmPageSize = 64 << 10
+	return initialSize / wasmPageSize
 }
 
 // writeTagSec writes the Wasm Tag section (ID 13) declaring effect tags
@@ -498,12 +563,16 @@ func writeGlobalSec(ctxt *ld.Link) {
 // writeExportSec writes the section that declares exports.
 // Exports can be accessed by the WebAssembly host, usually JavaScript.
 // The wasm_export_* functions and the linear memory get exported.
-func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
+func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int, initEntry uint64) {
 	sizeOffset := writeSecHeader(ctxt, sectionExport)
 
 	switch buildcfg.GOOS {
 	case "wasip1":
-		writeUleb128(ctxt.Out, uint64(2+len(ldr.WasmExports))) // number of exports
+		n := 2 + len(ldr.WasmExports)
+		if buildcfg.GOWASM.Threads {
+			n++
+		}
+		writeUleb128(ctxt.Out, uint64(n)) // number of exports
 		var entry, entryExpName string
 		switch ctxt.BuildMode {
 		case ld.BuildModeExe:
@@ -518,9 +587,22 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 			ld.Errorf("export symbol %s not defined", entry)
 		}
 		idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+		if buildcfg.GOWASM.Threads {
+			idx = uint32(initEntry)
+		}
 		writeName(ctxt.Out, entryExpName)   // the wasi entrypoint
 		ctxt.Out.WriteByte(0x00)            // func export
 		writeUleb128(ctxt.Out, uint64(idx)) // funcidx
+		if buildcfg.GOWASM.Threads {
+			s := ldr.Lookup("_rt0_wasm_thread", 0)
+			if s == 0 {
+				ld.Exitf("missing WebAssembly thread entry point")
+			}
+			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			writeName(ctxt.Out, "wasi_thread_start")
+			ctxt.Out.WriteByte(0x00)
+			writeUleb128(ctxt.Out, uint64(idx))
+		}
 		for _, s := range ldr.WasmExports {
 			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
 			writeName(ctxt.Out, ldr.SymName(s))
@@ -531,16 +613,33 @@ func writeExportSec(ctxt *ld.Link, ldr *loader.Loader, lenHostImports int) {
 		ctxt.Out.WriteByte(0x02)      // mem export
 		writeUleb128(ctxt.Out, 0)     // memidx
 	case "js":
-		writeUleb128(ctxt.Out, uint64(4+len(ldr.WasmExports))) // number of exports
+		n := 4 + len(ldr.WasmExports)
+		if buildcfg.GOWASM.Threads {
+			n++
+		}
+		writeUleb128(ctxt.Out, uint64(n)) // number of exports
 		for _, name := range []string{"run", "resume", "getsp"} {
 			s := ldr.Lookup("wasm_export_"+name, 0)
 			if s == 0 {
 				ld.Errorf("export symbol %s not defined", "wasm_export_"+name)
 			}
 			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			if buildcfg.GOWASM.Threads && name == "run" {
+				idx = uint32(initEntry)
+			}
 			writeName(ctxt.Out, name)           // inst.exports.run/resume/getsp in wasm_exec.js
 			ctxt.Out.WriteByte(0x00)            // func export
 			writeUleb128(ctxt.Out, uint64(idx)) // funcidx
+		}
+		if buildcfg.GOWASM.Threads {
+			s := ldr.Lookup("_rt0_wasm_thread", 0)
+			if s == 0 {
+				ld.Exitf("missing WebAssembly thread entry point")
+			}
+			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
+			writeName(ctxt.Out, "go_thread_start")
+			ctxt.Out.WriteByte(0x00)
+			writeUleb128(ctxt.Out, uint64(idx))
 		}
 		for _, s := range ldr.WasmExports {
 			idx := uint32(lenHostImports) + uint32(uint64(ldr.SymValue(s))>>16)
@@ -592,15 +691,12 @@ func writeCodeSec(ctxt *ld.Link, fns []*wasmFunc) {
 	writeSecSize(ctxt, sizeOffset)
 }
 
-// writeDataSec writes the section that provides data that will be used to initialize the linear memory.
-func writeDataSec(ctxt *ld.Link) {
-	sizeOffset := writeSecHeader(ctxt, sectionData)
+type dataSegment struct {
+	offset int32
+	data   []byte
+}
 
-	type dataSegment struct {
-		offset int32
-		data   []byte
-	}
-
+func makeDataSegments() []*dataSegment {
 	// Omit blocks of zeroes and instead emit data segments with offsets skipping the zeroes.
 	// This reduces the size of the WebAssembly binary. We use 8 bytes as an estimate for the
 	// overhead of adding a new segment (same as wasm-opt's memory-packing optimization uses).
@@ -654,16 +750,53 @@ func writeDataSec(ctxt *ld.Link) {
 		}
 	}
 
+	return segments
+}
+
+// writeDataSec writes the initial contents of linear memory. Threaded modules
+// use passive segments so instantiating a worker cannot overwrite shared data.
+func writeDataSec(ctxt *ld.Link, segments []*dataSegment) {
+	sizeOffset := writeSecHeader(ctxt, sectionData)
 	writeUleb128(ctxt.Out, uint64(len(segments))) // number of data entries
 	for _, seg := range segments {
-		writeUleb128(ctxt.Out, 0) // memidx
-		writeI32Const(ctxt.Out, seg.offset)
-		ctxt.Out.WriteByte(0x0b) // end
+		if buildcfg.GOWASM.Threads {
+			writeUleb128(ctxt.Out, 1) // passive segment
+		} else {
+			writeUleb128(ctxt.Out, 0) // active segment, memory 0
+			writeI32Const(ctxt.Out, seg.offset)
+			ctxt.Out.WriteByte(0x0b) // end
+		}
 		writeUleb128(ctxt.Out, uint64(len(seg.data)))
 		ctxt.Out.Write(seg.data)
 	}
 
 	writeSecSize(ctxt, sizeOffset)
+}
+
+// dataInitCode initializes shared data before entering the Go runtime.
+// This is an exported function, not a start section: worker instantiation must
+// leave the memory of the already running program unchanged.
+func dataInitCode(segments []*dataSegment, entry uint64, params int) []byte {
+	var b bytes.Buffer
+	writeUleb128(&b, 0) // no locals
+	for i, seg := range segments {
+		writeI32Const(&b, seg.offset)
+		writeI32Const(&b, 0)
+		writeI32Const(&b, int32(len(seg.data)))
+		b.Write([]byte{0xfc, 0x08}) // memory.init
+		writeUleb128(&b, uint64(i))
+		writeUleb128(&b, 0)         // memory index
+		b.Write([]byte{0xfc, 0x09}) // data.drop
+		writeUleb128(&b, uint64(i))
+	}
+	for i := 0; i < params; i++ {
+		b.WriteByte(0x20) // local.get
+		writeUleb128(&b, uint64(i))
+	}
+	b.WriteByte(0x10) // call
+	writeUleb128(&b, entry)
+	b.WriteByte(0x0b) // end
+	return b.Bytes()
 }
 
 // writeProducerSec writes an optional section that reports the source language and compiler version.
